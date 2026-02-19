@@ -4,3 +4,6 @@
 [submodule "Sparsity-Adaptive-Depth-Estimator"]
 	path = Sparsity-Adaptive-Depth-Estimator
 	url = https://github.com/Jayzhang2333/Sparsity-Adaptive-Depth-Estimator
+[submodule "vendor/SPADE"]
+	path = vendor/SPADE
+	url = https://github.com/Jayzhang2333/Sparsity-Adaptive-Depth-Estimator

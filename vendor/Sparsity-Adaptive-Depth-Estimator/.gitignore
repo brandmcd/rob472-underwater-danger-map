@@ -1,7 +1,0 @@
-# Ignore Weights folder
-Weights/
-
-*.pt
-
-# Python cache
-__pycache__/
