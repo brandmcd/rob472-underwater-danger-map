@@ -112,8 +112,8 @@ def main() -> None:
 
         img_rs = sktf.resize(
             img, (args.input_h, args.input_w, 3),
-            preserve_range=True, anti_aliasing=True
-        ).astype(np.float32)
+            preserve_range=False, anti_aliasing=True
+        )  # preserve_range=False normalizes to [0,1] like the original
 
         x = np.expand_dims(img_rs, axis=0)
         y = model.predict(x, verbose=0)[0]  # H x W x 5
