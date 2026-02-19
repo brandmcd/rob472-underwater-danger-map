@@ -1,0 +1,3 @@
+[submodule "vendor/SUIM-Net"]
+	path = vendor/SUIM-Net
+	url = https://github.com/IPNUISTlegal/SUIM-Net
