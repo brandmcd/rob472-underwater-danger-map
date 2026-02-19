@@ -1,0 +1,59 @@
+#!/bin/bash
+#SBATCH --job-name=suimnet-infer
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=gpu
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=01:00:00
+#SBATCH --output=logs/suimnet-infer-%j.log
+#
+# Usage:
+#   sbatch cluster/suimnet_infer.sbat              # defaults: dataset=suim
+#   sbatch --export=DATASET=deepfish cluster/suimnet_infer.sbat
+#   sbatch --export=DATASET=lars     cluster/suimnet_infer.sbat
+#
+# The script uses the "greatlakes" profile from configs/profiles.yaml,
+# which resolves data paths under /scratch/rob572w26_class_root/...
+# Make sure your data is staged there before submitting.
+
+set -euo pipefail
+
+# ---------- configurable via --export ----------
+DATASET="${DATASET:-suim}"
+PROFILE="${PROFILE:-greatlakes}"
+# -----------------------------------------------
+
+echo "=== SUIM-Net inference ==="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "GPUs     : $SLURM_GPUS_ON_NODE"
+echo "Dataset  : $DATASET"
+echo "Profile  : $PROFILE"
+echo ""
+
+# Navigate to repo root (assumes sbatch is run from repo root)
+cd "$SLURM_SUBMIT_DIR"
+
+# Load modules available on Great Lakes
+module load python/3.10 cuda/11.8 cudnn/8.6
+
+# Create / reuse a venv inside the scratch space
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472"
+if [[ ! -d "$VENV_DIR" ]]; then
+    echo "Creating virtualenv at $VENV_DIR ..."
+    python -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
+
+# Install / upgrade deps (fast no-op if already satisfied)
+pip install --quiet --upgrade pip
+pip install --quiet -r requirements.txt
+
+# Run inference
+python -m src.suimnet.run_infer \
+    --profile "$PROFILE" \
+    --dataset "$DATASET"
+
+echo ""
+echo "=== Done ==="

@@ -1,0 +1,13 @@
+datasets:
+  suim:
+    images_rel: suim/TEST/images
+    labels_rel: suim/TEST/masks
+    has_labels: true
+  deepfish:
+    images_rel: deepfish/images
+    labels_rel: null
+    has_labels: false
+  lars:
+    images_rel: lars/images
+    labels_rel: null
+    has_labels: false

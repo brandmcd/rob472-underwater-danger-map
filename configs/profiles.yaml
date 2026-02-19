@@ -1,0 +1,7 @@
+profiles:
+  local:
+    data_root: /mnt/g/rob472/data
+    outputs_root: outputs
+  greatlakes:
+    data_root: /scratch/rob572w26_class_root/rob572w26_class/${USER}/data
+    outputs_root: /scratch/rob572w26_class_root/rob572w26_class/${USER}/outputs

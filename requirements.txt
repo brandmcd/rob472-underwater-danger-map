@@ -1,0 +1,8 @@
+pyyaml
+numpy
+imageio
+scikit-image
+opencv-python-headless
+h5py
+tensorflow==2.13.*
+keras==2.13.*
