@@ -1,3 +1,6 @@
 [submodule "vendor/SUIM-Net"]
 	path = vendor/SUIM-Net
 	url = https://github.com/IPNUISTlegal/SUIM-Net
+[submodule "Sparsity-Adaptive-Depth-Estimator"]
+	path = Sparsity-Adaptive-Depth-Estimator
+	url = https://github.com/Jayzhang2333/Sparsity-Adaptive-Depth-Estimator
