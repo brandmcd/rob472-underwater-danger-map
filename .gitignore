@@ -1,0 +1,15 @@
+# outputs
+outputs/
+logs/
+data/
+datasets/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# editor
+.vscode/
+.DS_Store
