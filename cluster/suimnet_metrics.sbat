@@ -1,0 +1,54 @@
+#!/bin/bash
+#SBATCH --job-name=suimnet-metrics
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=standard
+#SBATCH --qos=class
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=8G
+#SBATCH --time=00:30:00
+#SBATCH --output=logs/suimnet-metrics-%j.log
+#
+# Compute IoU / Dice / Precision / Recall for SUIM-Net predictions.
+# No GPU needed — CPU-only job.
+#
+# Usage:
+#   sbatch cluster/suimnet_metrics.sbat                       # defaults: dataset=suim
+#   sbatch --export=DATASET=deepfish cluster/suimnet_metrics.sbat
+
+set -euo pipefail
+
+DATASET="${DATASET:-suim}"
+PROFILE="${PROFILE:-greatlakes}"
+
+echo "=== SUIM-Net metrics ==="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "Dataset  : $DATASET"
+echo "Profile  : $PROFILE"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs reports
+
+module load python/3.10.4
+
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472"
+if [[ ! -d "$VENV_DIR" ]]; then
+    echo "Creating virtualenv at $VENV_DIR ..."
+    python -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
+
+pip install --quiet --upgrade pip
+pip install --quiet -r requirements.txt
+
+PREDS_DIR="outputs/${DATASET}"
+
+python -m src.suimnet.metric_calc \
+    --profile "$PROFILE" \
+    --dataset "$DATASET" \
+    --preds_dir "$PREDS_DIR" \
+    --out_csv "reports/${DATASET}_metrics.csv"
+
+echo ""
+echo "Done. CSV saved to reports/${DATASET}_metrics.csv"
