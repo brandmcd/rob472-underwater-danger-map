@@ -36,7 +36,7 @@ echo ""
 cd "$SLURM_SUBMIT_DIR"
 
 # Load modules available on Great Lakes
-module load python/3.10 cuda/11.8 cudnn/8.6
+module load python/3.10 cuda/11.8.0 cudnn/11.8-v8.7.0
 
 # Create / reuse a venv inside the scratch space
 VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472"
