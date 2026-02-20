@@ -16,6 +16,26 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SUIMNET_ROOT = REPO_ROOT / "vendor" / "SUIM-Net"
 sys.path.append(str(SUIMNET_ROOT))
 
+# ---------- Keras compatibility shim for vendor SUIM-Net ----------
+# The vendor code uses old Keras API (keras.models.Input, Model(input=, output=))
+# which changed in Keras 2.13+.  Patch here so we never touch vendor code.
+import keras.models
+import keras.layers
+
+if not hasattr(keras.models, 'Input'):
+    keras.models.Input = keras.layers.Input
+
+_OrigModel = keras.models.Model
+class _CompatModel(_OrigModel):
+    def __init__(self, *args, **kwargs):
+        if 'input' in kwargs and 'inputs' not in kwargs:
+            kwargs['inputs'] = kwargs.pop('input')
+        if 'output' in kwargs and 'outputs' not in kwargs:
+            kwargs['outputs'] = kwargs.pop('output')
+        super().__init__(*args, **kwargs)
+keras.models.Model = _CompatModel
+# ------------------------------------------------------------------
+
 from model import SUIM_Net  # type: ignore
 
 
