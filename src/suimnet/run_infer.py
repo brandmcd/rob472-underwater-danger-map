@@ -16,6 +16,29 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SUIMNET_ROOT = REPO_ROOT / "vendor" / "SUIM-Net"
 sys.path.append(str(SUIMNET_ROOT))
 
+# ── Keras 2.13+ compatibility shim ───────────────────────────────────────────
+# vendor/SUIM-Net/model.py uses `from keras.models import Input, Model` and
+# `Model(input=..., output=...)` — APIs that were removed in Keras 2.13+.
+# Patch the keras.models namespace before importing model.py.
+import keras
+import keras.models as _km
+
+if not hasattr(_km, "Input"):
+    _km.Input = keras.layers.Input
+
+_OrigModel = _km.Model
+
+class _ModelShim(_OrigModel):
+    def __init__(self, *args, **kwargs):
+        if "input" in kwargs and "inputs" not in kwargs:
+            kwargs["inputs"] = kwargs.pop("input")
+        if "output" in kwargs and "outputs" not in kwargs:
+            kwargs["outputs"] = kwargs.pop("output")
+        super().__init__(*args, **kwargs)
+
+_km.Model = _ModelShim
+# ─────────────────────────────────────────────────────────────────────────────
+
 from model import SUIM_Net  # type: ignore
 
 
