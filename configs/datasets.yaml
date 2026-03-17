@@ -12,7 +12,7 @@ datasets:
   # Run convert_deepfish.py first to produce SUIM-format masks under masks/FV/
   # Download: http://data.qld.edu.au/public/Q5842/.../DeepFish.tar
   deepfish:
-    images_rel: deepfish/images
+    images_rel: deepfish/Segmentation/images/valid
     labels_rel: deepfish/masks        # populated after running convert_deepfish.py
     has_labels: true
 

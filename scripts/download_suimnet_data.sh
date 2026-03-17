@@ -69,7 +69,7 @@ echo ""
 DEEPFISH_DIR="$DATA_ROOT/deepfish"
 DEEPFISH_URL="http://data.qld.edu.au/public/Q5842/2020-AlzayatSaleh-00e364223a600e83bd9c3f5bcd91045-DeepFish/DeepFish.tar"
 
-if [[ -d "$DEEPFISH_DIR/Fish/Segmentation" ]]; then
+if [[ -d "$DEEPFISH_DIR/Segmentation/images/valid" ]]; then
     echo "[DeepFish] Already staged at $DEEPFISH_DIR — skipping."
 else
     echo "[DeepFish] Downloading (~7 GB — this may take a while)..."
@@ -80,19 +80,11 @@ else
     tar -xf "$DEEPFISH_DIR/DeepFish.tar" -C "$DEEPFISH_DIR"
     rm "$DEEPFISH_DIR/DeepFish.tar"
 
-    # Normalise: move DeepFish/* up if the tar creates an inner directory
-    INNER=$(find "$DEEPFISH_DIR" -maxdepth 1 -mindepth 1 -type d | head -1)
-    if [[ -n "$INNER" && "$INNER" != "$DEEPFISH_DIR/Fish" ]]; then
-        mv "$INNER"/* "$DEEPFISH_DIR/" 2>/dev/null || true
-        rmdir "$INNER" 2>/dev/null || true
-    fi
-
-    # Set images_rel to the segmentation valid split images
-    if [[ ! -d "$DEEPFISH_DIR/images" ]]; then
-        mkdir -p "$DEEPFISH_DIR/images"
-        cp -r "$DEEPFISH_DIR/Fish/Segmentation/valid/images/"* "$DEEPFISH_DIR/images/"
-    fi
+    # Clean up the empty images/ dir created by a prior failed run, if present
+    rmdir "$DEEPFISH_DIR/images" 2>/dev/null || true
     echo "[DeepFish] Done → $DEEPFISH_DIR"
+    echo "           Segmentation images : $DEEPFISH_DIR/Segmentation/images/valid"
+    echo "           Segmentation masks  : $DEEPFISH_DIR/Segmentation/masks/valid"
 fi
 echo ""
 

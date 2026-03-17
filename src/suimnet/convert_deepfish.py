@@ -80,8 +80,8 @@ def main() -> None:
 
     if args.profile:
         ds = resolve_dataset_paths(profile=args.profile, dataset="deepfish")
-        data_root = ds.images_dir.parent.parent   # .../data/deepfish/
-        masks_src = data_root / "Fish" / "Segmentation" / args.split / "masks"
+        data_root = ds.images_dir.parent.parent.parent   # .../data/deepfish/
+        masks_src = data_root / "Segmentation" / "masks" / args.split
         out_dir   = ds.labels_dir
         if out_dir is None:
             print("ERROR: labels_rel not configured for deepfish in datasets.yaml", file=sys.stderr)
