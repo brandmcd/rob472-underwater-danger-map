@@ -6,6 +6,8 @@ datasets:
     images_rel: suim/TEST/images
     labels_rel: suim/TEST/masks
     has_labels: true
+    # Default 0.5 thresholds work well on SUIM (mIoU=0.78 out-of-box); no overrides needed.
+    thresholds: {}
 
   # ── DeepFish ─────────────────────────────────────────────────────────────────
   # ~40k fish images; fish-only binary masks (FV class only)
@@ -15,6 +17,13 @@ datasets:
     images_rel: deepfish/Segmentation/images/valid
     labels_rel: deepfish/masks        # populated after running convert_deepfish.py
     has_labels: true
+    # FV threshold lowered from 0.5 → 0.3:
+    #   Domain shift causes the model to under-activate its fish channel on DeepFish
+    #   imagery (81% of images got recall=0 at 0.5). Lowering the threshold recovers
+    #   recall at some precision cost. Run threshold_sweep.py after saving logits to
+    #   find the exact optimum for this dataset.
+    thresholds:
+      FV: 0.3
 
   # ── USIS10K TEST split ───────────────────────────────────────────────────────
   # ~1595 test images, COCO JSON annotations (7 classes)
@@ -24,3 +33,13 @@ datasets:
     images_rel: usis10k/test
     labels_rel: usis10k/masks         # populated after running convert_usis10k.py
     has_labels: true
+    # RI and WR thresholds raised from 0.5 → 0.65:
+    #   USIS10K annotates objects only, not background textures. The model over-predicts
+    #   RI (reef) and WR (wreck) on 58–59% of images where GT has no pixels, because it
+    #   learned that underwater scenes = reef background on SUIM. At 0.5 this produces
+    #   a false-positive explosion (mPrec=0.23 for RI). Raising the threshold cuts FP
+    #   while preserving most recall (RI recall was 0.84 at 0.5, so there is headroom).
+    #   Run threshold_sweep.py after saving logits to find the exact per-class optimum.
+    thresholds:
+      RI: 0.65
+      WR: 0.65

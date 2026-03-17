@@ -23,6 +23,11 @@ set -euo pipefail
 # ---------- configurable via --export ----------
 DATASET="${DATASET:-suim}"
 PROFILE="${PROFILE:-greatlakes}"
+# Optional: per-class threshold overrides, e.g. "FV=0.3,RI=0.7"
+# If empty, dataset defaults from configs/datasets.yaml are used automatically.
+THRESHOLDS="${THRESHOLDS:-}"
+# Set SAVE_LOGITS=1 to save raw sigmoid NPZ files for threshold sweeping (no GPU needed later)
+SAVE_LOGITS="${SAVE_LOGITS:-0}"
 # -----------------------------------------------
 
 echo "=== SUIM-Net inference ==="
@@ -52,10 +57,20 @@ source "$VENV_DIR/bin/activate"
 pip install --quiet --upgrade pip
 pip install --quiet -r requirements.txt
 
+# Build optional args
+EXTRA_ARGS=""
+[[ -n "$THRESHOLDS"    ]] && EXTRA_ARGS="$EXTRA_ARGS --thresholds $THRESHOLDS"
+[[ "$SAVE_LOGITS" == "1" ]] && EXTRA_ARGS="$EXTRA_ARGS --save_logits"
+
+echo "Extra args : ${EXTRA_ARGS:-none}"
+echo ""
+
 # Run inference
+# shellcheck disable=SC2086
 python -m src.suimnet.run_infer \
     --profile "$PROFILE" \
-    --dataset "$DATASET"
+    --dataset "$DATASET" \
+    $EXTRA_ARGS
 
 echo ""
 echo "=== Done ==="

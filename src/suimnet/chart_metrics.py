@@ -213,6 +213,79 @@ def plot_precision_recall(df: pd.DataFrame, out_dir: Path, title_prefix: str, dp
     _save(fig, out_dir / "precision_recall.png", dpi)
 
 
+# ── Chart 6: image-level prediction breakdown (TP / TN / FP / FN) ────────────
+def plot_prediction_breakdown(df: pd.DataFrame, out_dir: Path, title_prefix: str, dpi: int) -> None:
+    """
+    Categorise every image × class row by whether GT and prediction are present.
+
+    Uses the edge-case conventions in metric_calc.py:
+      prec=1 when nothing is predicted (TP+FP=0); rec=1 when GT is empty (TP+FN=0).
+
+    Categories (image-level, not pixel-level):
+      TP  GT present,  model fires   → real detection
+      FP  GT absent,   model fires   → false alarm
+      FN  GT present,  model silent  → missed detection
+      TN  GT absent,   model silent  → correct background suppression
+    """
+    classes = [c for c in CLASS_LABELS if c in df["class"].unique()]
+
+    def categorise(row: pd.Series) -> str:
+        prec, rec = row["precision"], row["recall"]
+        pred_empty = prec > 0.99   # TP+FP == 0  →  prec = 1.0 by convention
+        gt_empty   = rec  > 0.99   # TP+FN == 0  →  rec  = 1.0 by convention
+        if gt_empty and pred_empty:
+            return "TN"
+        if gt_empty and not pred_empty:
+            return "FP"
+        if not gt_empty and pred_empty:
+            return "FN"
+        return "TP"
+
+    df2 = df.copy()
+    df2["category"] = df2.apply(categorise, axis=1)
+
+    cat_order  = ["TP", "TN", "FN", "FP"]
+    cat_colors = {"TP": "#27ae60", "TN": "#bdc3c7", "FN": "#e67e22", "FP": "#e74c3c"}
+    cat_labels = {
+        "TP": "GT present, detected",
+        "TN": "GT absent,  suppressed (correct)",
+        "FN": "GT present, missed (false negative)",
+        "FP": "GT absent,  fired (false positive)",
+    }
+
+    x      = np.arange(len(classes))
+    width  = 0.55
+    fig, ax = plt.subplots(figsize=(max(8, len(classes) * 2.2), 5.5))
+    bottoms = np.zeros(len(classes))
+
+    for cat in cat_order:
+        fracs = []
+        for cls in classes:
+            cls_df = df2[df2["class"] == cls]
+            n      = len(cls_df)
+            fracs.append((cls_df["category"] == cat).sum() / n if n else 0.0)
+        fracs = np.array(fracs)
+        bars  = ax.bar(x, fracs, width, bottom=bottoms,
+                       color=cat_colors[cat], label=cat_labels[cat], alpha=0.88)
+        for bar, frac, bot in zip(bars, fracs, bottoms):
+            if frac > 0.04:
+                ax.text(bar.get_x() + bar.get_width() / 2, bot + frac / 2,
+                        f"{frac:.0%}", ha="center", va="center",
+                        fontsize=8, fontweight="bold", color="white")
+        bottoms += fracs
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([CLASS_LABELS[c] for c in classes])
+    ax.set_ylabel("Fraction of Images")
+    ax.set_ylim(0, 1.22)
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
+    ax.set_title(f"{title_prefix} — Image-Level Prediction Breakdown\n"
+                 "(categorised by GT presence vs model activation)")
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.92)
+    fig.tight_layout()
+    _save(fig, out_dir / "prediction_breakdown.png", dpi)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     ap = argparse.ArgumentParser(description="Chart SUIM-Net metrics from CSV.")
@@ -254,6 +327,7 @@ def main() -> None:
     plot_overall_summary(df, out_dir, title_prefix, args.dpi)
     plot_iou_heatmap(df, out_dir, title_prefix, args.dpi)
     plot_precision_recall(df, out_dir, title_prefix, args.dpi)
+    plot_prediction_breakdown(df, out_dir, title_prefix, args.dpi)
 
     print(f"\nAll charts saved to {out_dir}/")
 

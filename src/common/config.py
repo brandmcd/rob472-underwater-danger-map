@@ -27,6 +27,7 @@ class DatasetPaths:
     images_dir: Path
     labels_dir: Optional[Path]
     has_labels: bool
+    thresholds: Dict[str, float]  # per-class sigmoid threshold overrides (from datasets.yaml)
 
 
 def resolve_dataset_paths(
@@ -72,9 +73,13 @@ def resolve_dataset_paths(
     if labels_rel:
         labels_dir = (data_root / _expand(labels_rel)).resolve()
 
+    raw_thresholds = ds.get("thresholds") or {}
+    thresholds = {k.upper(): float(v) for k, v in raw_thresholds.items()}
+
     return DatasetPaths(
         name=dataset,
         images_dir=images_dir,
         labels_dir=labels_dir,
         has_labels=has_labels,
+        thresholds=thresholds,
     )

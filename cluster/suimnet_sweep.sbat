@@ -1,0 +1,85 @@
+#!/bin/bash
+#SBATCH --job-name=suimnet-sweep
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=standard
+#SBATCH --qos=class
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=00:30:00
+#SBATCH --output=logs/suimnet-sweep-%j.log
+#
+# Sweep sigmoid thresholds per class from saved logit NPZ files.
+# No GPU needed — CPU-only job. Requires run_infer.py --save_logits to have run first.
+#
+# Usage:
+#   sbatch cluster/suimnet_sweep.sbat                        # defaults: dataset=suim
+#   sbatch --export=DATASET=deepfish cluster/suimnet_sweep.sbat
+#   sbatch --export=DATASET=usis10k,CLASSES="RI WR" cluster/suimnet_sweep.sbat
+#
+# Output:
+#   reports/suimnet/sweep/<dataset>/threshold_sweep.csv
+#   reports/suimnet/sweep/<dataset>/threshold_sweep.png
+#
+# After inspecting results, update configs/datasets.yaml thresholds: block and
+# re-run sbatch cluster/suimnet_infer.sbat to regenerate masks with new thresholds,
+# then sbatch cluster/suimnet_metrics.sbat to recompute metrics.
+
+set -euo pipefail
+
+DATASET="${DATASET:-suim}"
+PROFILE="${PROFILE:-greatlakes}"
+# Space-separated list of classes to sweep; empty = all available
+CLASSES="${CLASSES:-}"
+
+echo "=== SUIM-Net threshold sweep ==="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "Dataset  : $DATASET"
+echo "Profile  : $PROFILE"
+[[ -n "$CLASSES" ]] && echo "Classes  : $CLASSES"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs reports/suimnet/sweep
+
+module load python/3.10.4
+
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472"
+if [[ ! -d "$VENV_DIR" ]]; then
+    echo "Creating virtualenv at $VENV_DIR ..."
+    python -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
+
+pip install --quiet --upgrade pip
+pip install --quiet -r requirements.txt
+
+LOGITS_DIR="outputs/${DATASET}/logits"
+
+if [[ ! -d "$LOGITS_DIR" ]]; then
+    echo "ERROR: Logits directory not found: $LOGITS_DIR"
+    echo "       Re-run inference with SAVE_LOGITS=1:"
+    echo "       sbatch --export=DATASET=${DATASET},SAVE_LOGITS=1 cluster/suimnet_infer.sbat"
+    exit 1
+fi
+
+# Build optional --classes arg
+CLASSES_ARG=""
+[[ -n "$CLASSES" ]] && CLASSES_ARG="--classes $CLASSES"
+
+# shellcheck disable=SC2086
+python -m src.suimnet.threshold_sweep \
+    --profile "$PROFILE" \
+    --dataset "$DATASET" \
+    --logits_dir "$LOGITS_DIR" \
+    $CLASSES_ARG
+
+echo ""
+echo "=== Done ==="
+echo "  Results : reports/suimnet/sweep/${DATASET}/"
+echo ""
+echo "Next steps:"
+echo "  1. Review reports/suimnet/sweep/${DATASET}/threshold_sweep.csv"
+echo "  2. Update configs/datasets.yaml thresholds: block with optimal values"
+echo "  3. Re-run inference:  sbatch --export=DATASET=${DATASET} cluster/suimnet_infer.sbat"
+echo "  4. Re-run metrics:    sbatch --export=DATASET=${DATASET} cluster/suimnet_metrics.sbat"
