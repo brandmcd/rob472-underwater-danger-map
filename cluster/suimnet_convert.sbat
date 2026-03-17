@@ -1,0 +1,65 @@
+#!/bin/bash
+#SBATCH --job-name=suimnet-convert
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=standard
+#SBATCH --qos=class
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=01:00:00
+#SBATCH --output=logs/suimnet-convert-%j.log
+#
+# Convert dataset labels to SUIM-style binary masks before running inference.
+# Run this ONCE per dataset after downloading with scripts/download_suimnet_data.sh.
+#
+# Usage:
+#   sbatch --export=DATASET=deepfish cluster/suimnet_convert.sbat
+#   sbatch --export=DATASET=usis10k  cluster/suimnet_convert.sbat
+#
+# No conversion needed for SUIM — it already ships in the correct format.
+
+set -euo pipefail
+
+DATASET="${DATASET:-usis10k}"
+PROFILE="${PROFILE:-greatlakes}"
+
+echo "=== SUIM-Net label conversion ==="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "Dataset  : $DATASET"
+echo "Profile  : $PROFILE"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs
+
+module load python/3.10.4
+
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472"
+if [[ ! -d "$VENV_DIR" ]]; then
+    python -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
+
+pip install --quiet --upgrade pip
+pip install --quiet -r requirements.txt
+# pycocotools is needed for compressed RLE decoding in USIS10K
+pip install --quiet pycocotools
+
+case "$DATASET" in
+    deepfish)
+        python -m src.suimnet.convert_deepfish \
+            --profile "$PROFILE" \
+            --split valid
+        ;;
+    usis10k)
+        python -m src.suimnet.convert_usis10k \
+            --profile "$PROFILE" \
+            --dataset usis10k
+        ;;
+    *)
+        echo "No conversion needed for dataset: $DATASET (or unknown dataset)"
+        ;;
+esac
+
+echo ""
+echo "=== Done ==="

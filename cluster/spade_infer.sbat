@@ -1,0 +1,99 @@
+#!/bin/bash
+#SBATCH --job-name=spade-infer
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=gpu
+#SBATCH --qos=class
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=24G
+#SBATCH --time=01:00:00
+#SBATCH --output=logs/spade-infer-%j.log
+#
+# Run SPADE depth estimation inference / evaluation on Great Lakes.
+#
+# Usage (example / FLSea demo data bundled in vendor/SPADE):
+#   sbatch cluster/spade_infer.sbat
+#
+# Usage (full FLSea dataset, staged in scratch):
+#   sbatch --export=DATASET=flsea cluster/spade_infer.sbat
+#
+# Usage (custom filenames file):
+#   sbatch --export=FILENAMES_FILE=/path/to/filenames.txt cluster/spade_infer.sbat
+#
+# Required before submitting:
+#   1. Download pretrained weights from the SPADE README Google Drive link.
+#   2. Place the .pt file at:
+#      /scratch/rob572w26_class_root/rob572w26_class/${USER}/spade_weights/underwater_depth_pipeline.pt
+#      (or override WEIGHTS_PATH below via --export)
+#
+# Output depth visualizations: reports/spade/<DATASET>/
+#
+# Note: SPADE uses PyTorch (not TensorFlow).  A separate venv is created at:
+#   /scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade
+
+set -euo pipefail
+
+# ---------- configurable via --export ----------
+DATASET="${DATASET:-example}"
+WEIGHTS_PATH="${WEIGHTS_PATH:-/scratch/rob572w26_class_root/rob572w26_class/${USER}/spade_weights/underwater_depth_pipeline.pt}"
+# Override this to point at a custom filenames list (relative to vendor/SPADE/).
+# Default uses the FLSea demo list bundled with the repo.
+FILENAMES_FILE="${FILENAMES_FILE:-}"
+EVAL_RANGES="${EVAL_RANGES:-10 5 2}"
+# -----------------------------------------------
+
+echo "=== SPADE inference ==="
+echo "Job ID      : $SLURM_JOB_ID"
+echo "Node        : $(hostname)"
+echo "GPUs        : $SLURM_GPUS_ON_NODE"
+echo "Dataset tag : $DATASET"
+echo "Weights     : $WEIGHTS_PATH"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs "reports/spade/${DATASET}"
+
+# Load modules available on Great Lakes
+module load python/3.10.4 cuda/11.8.0 cudnn/11.8-v8.7.0
+
+# Create / reuse a dedicated PyTorch venv (separate from the TF venv used by SUIM-Net)
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade"
+if [[ ! -d "$VENV_DIR" ]]; then
+    echo "Creating virtualenv at $VENV_DIR ..."
+    python -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
+
+pip install --quiet --upgrade pip
+pip install --quiet -r requirements_spade.txt
+
+# Verify weights exist
+if [[ ! -f "$WEIGHTS_PATH" ]]; then
+    echo "ERROR: Weights file not found: $WEIGHTS_PATH"
+    echo "Download from Google Drive (see vendor/SPADE/README.md) and place at the path above."
+    exit 1
+fi
+
+# Absolute path to output dir (evaluate.py is run from vendor/SPADE/)
+OUTPUT_DIR="$(realpath "reports/spade/${DATASET}")"
+
+# Build optional override args
+EXTRA_ARGS=""
+if [[ -n "$FILENAMES_FILE" ]]; then
+    EXTRA_ARGS="filenames_file_eval=${FILENAMES_FILE}"
+fi
+
+# SPADE must be run from vendor/SPADE/ so that UnderwaterDepth.* imports resolve
+cd vendor/SPADE
+
+python evaluate.py \
+    -m SPADE \
+    --pretrained_resource "local::${WEIGHTS_PATH}" \
+    -d flsea_sparse_feature \
+    -r $EVAL_RANGES \
+    --save-image \
+    --output-image-path "${OUTPUT_DIR}" \
+    ${EXTRA_ARGS}
+
+echo ""
+echo "=== Done. Depth visualizations saved to reports/spade/${DATASET}/ ==="

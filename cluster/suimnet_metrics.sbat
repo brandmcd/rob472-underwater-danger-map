@@ -14,11 +14,23 @@
 # Usage:
 #   sbatch cluster/suimnet_metrics.sbat                       # defaults: dataset=suim
 #   sbatch --export=DATASET=deepfish cluster/suimnet_metrics.sbat
+#   sbatch --export=DATASET=usis10k  cluster/suimnet_metrics.sbat
+#
+# Output CSV:    reports/suimnet/${DATASET}_metrics.csv
+# Output charts: reports/suimnet/figures/${DATASET}/
 
 set -euo pipefail
 
 DATASET="${DATASET:-suim}"
 PROFILE="${PROFILE:-greatlakes}"
+
+# Human-readable title for chart headings (override via --export=TITLE="...")
+declare -A TITLES=(
+    [suim]="SUIM TEST Split (110 images)"
+    [deepfish]="DeepFish Segmentation (valid split)"
+    [usis10k]="USIS10K TEST Split (~1595 images)"
+)
+TITLE="${TITLE:-${TITLES[$DATASET]:-${DATASET}}}"
 
 echo "=== SUIM-Net metrics ==="
 echo "Job ID   : $SLURM_JOB_ID"
@@ -28,7 +40,7 @@ echo "Profile  : $PROFILE"
 echo ""
 
 cd "$SLURM_SUBMIT_DIR"
-mkdir -p logs reports
+mkdir -p logs reports/suimnet/figures
 
 module load python/3.10.4
 
@@ -48,7 +60,17 @@ python -m src.suimnet.metric_calc \
     --profile "$PROFILE" \
     --dataset "$DATASET" \
     --preds_dir "$PREDS_DIR" \
-    --out_csv "reports/${DATASET}_metrics.csv"
+    --out_csv "reports/suimnet/${DATASET}_metrics.csv"
 
 echo ""
-echo "Done. CSV saved to reports/${DATASET}_metrics.csv"
+echo "Metrics saved. Generating charts..."
+
+python -m src.suimnet.chart_metrics \
+    --csv "reports/suimnet/${DATASET}_metrics.csv" \
+    --title "SUIM-Net on ${TITLE}" \
+    --dpi 300
+
+echo ""
+echo "Done."
+echo "  CSV    : reports/suimnet/${DATASET}_metrics.csv"
+echo "  Charts : reports/suimnet/figures/${DATASET}/"

@@ -1,0 +1,22 @@
+# Dependencies for SPADE depth estimation (PyTorch-based).
+# Install into a separate venv from requirements.txt (which targets TensorFlow / SUIM-Net).
+#
+# On ARC Great Lakes, load these modules first:
+#   module load python/3.10.4 cuda/11.8.0 cudnn/11.8-v8.7.0
+# then:
+#   pip install -r requirements_spade.txt
+
+torch>=2.1.0
+torchvision
+numpy==1.24.*
+scipy>=1.10
+matplotlib
+pandas
+h5py
+scikit-learn
+timm
+tqdm
+tifffile
+einops
+huggingface-hub
+Pillow
