@@ -16,8 +16,7 @@
 #           reports/spade/<DATASET>/        per-image depth visualisations
 #
 # Prerequisites (in order):
-#   1. Download pretrained weights (see vendor/SPADE/README.md → Google Drive)
-#      → place at $WEIGHTS_PATH (default path below)
+#   1. python scripts/build_spade_weights.py  (local, then scp to cluster)
 #   2. bash scripts/download_spade_data.sh
 #   3. sbatch --export=DATASET=<ds> cluster/spade_convert.sbat
 #
@@ -49,19 +48,29 @@ mkdir -p logs "reports/spade/${DATASET}" "reports/spade/figures/${DATASET}"
 
 module load python/3.10.4 cuda/11.8.0 cudnn/11.8-v8.7.0
 
+# ── Venv setup (flock prevents race when multiple jobs start simultaneously) ─
 VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade"
-if [[ ! -d "$VENV_DIR" ]]; then
-    echo "Creating virtualenv at $VENV_DIR ..."
-    python -m venv "$VENV_DIR"
-fi
-source "$VENV_DIR/bin/activate"
+LOCK_FILE="${VENV_DIR}.lock"
+mkdir -p "$(dirname "$VENV_DIR")"
 
-pip install --quiet --upgrade pip
-pip install --quiet -r requirements_spade.txt
+(
+    flock -x 200
+    if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
+        echo "Setting up virtualenv at $VENV_DIR ..."
+        python -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install --quiet --upgrade pip
+        pip install --quiet -r requirements_spade.txt
+        touch "$VENV_DIR/.deps_ok"
+    fi
+) 200>"$LOCK_FILE"
+
+source "$VENV_DIR/bin/activate"
 
 if [[ ! -f "$WEIGHTS_PATH" ]]; then
     echo "ERROR: weights not found at $WEIGHTS_PATH"
-    echo "Download from Google Drive (see vendor/SPADE/README.md) and place there."
+    echo "Build locally with: python scripts/build_spade_weights.py"
+    echo "Then scp to: $WEIGHTS_PATH"
     exit 1
 fi
 

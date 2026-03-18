@@ -79,7 +79,10 @@ _kaggle_download() {
 # ─────────────────────────────────────────────────────────────────────────────
 SEATHRU_RAW="$DATA_ROOT/seathru/raw"
 
-if [[ -d "$SEATHRU_RAW" && -n "$(find "$SEATHRU_RAW" -name '*.png' 2>/dev/null | head -1)" ]]; then
+# Check for both RGB (.png) AND depth (.tif) files — an empty dir from a failed download won't pass
+if [[ -d "$SEATHRU_RAW" \
+      && -n "$(find "$SEATHRU_RAW" -name '*.png' 2>/dev/null | head -1)" \
+      && -n "$(find "$SEATHRU_RAW" \( -name '*.tif' -o -name '*.tiff' \) 2>/dev/null | head -1)" ]]; then
     echo "[SeaThru] Already staged at $SEATHRU_RAW — skipping."
 else
     echo "[SeaThru] Downloading via Kaggle REST API (~32 GB)..."
@@ -117,7 +120,7 @@ echo ""
 HIMB_GT_DIR="$DATA_ROOT/kskin/HIMB_ground"
 HIMB_GT_URL="http://www.umich.edu/~dropopen2/DROPUWStereo_HIMB_ground.tar.gz"
 
-if [[ -d "$HIMB_GT_DIR" && -n "$(find "$HIMB_GT_DIR" \( -name '*.npy' -o -name '*.tif' \) 2>/dev/null | head -1)" ]]; then
+if [[ -d "$HIMB_GT_DIR" && -n "$(find "$HIMB_GT_DIR" \( -name '*.npy' -o -name '*.tif' -o -name '*.png' \) 2>/dev/null | head -1)" ]]; then
     echo "[kskin GT depth]     Already staged — skipping."
 else
     echo "[kskin GT depth]     Downloading..."

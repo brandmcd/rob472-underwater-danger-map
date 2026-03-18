@@ -14,6 +14,7 @@
 # Usage:
 #   sbatch --export=DATASET=seathru cluster/spade_convert.sbat
 #   sbatch --export=DATASET=kskin   cluster/spade_convert.sbat
+#   sbatch --export=DATASET=flsea   cluster/spade_convert.sbat
 #
 # Optional overrides:
 #   MAX_IMAGES=50  — cap images converted (smoke-test)
@@ -40,17 +41,24 @@ mkdir -p logs data/spade_lists "reports/spade/${DATASET}"
 
 module load python/3.10.4
 
+# ── Venv setup (flock prevents race when multiple jobs start simultaneously) ─
 VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade"
-if [[ ! -d "$VENV_DIR" ]]; then
-    echo "Creating virtualenv at $VENV_DIR ..."
-    python -m venv "$VENV_DIR"
-fi
-source "$VENV_DIR/bin/activate"
+LOCK_FILE="${VENV_DIR}.lock"
+mkdir -p "$(dirname "$VENV_DIR")"
 
-pip install --quiet --upgrade pip
-pip install --quiet -r requirements_spade.txt
-# opencv headless is needed for Shi-Tomasi corner detection
-pip install --quiet opencv-python-headless
+(
+    flock -x 200
+    if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
+        echo "Setting up virtualenv at $VENV_DIR ..."
+        python -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install --quiet --upgrade pip
+        pip install --quiet -r requirements_spade.txt
+        touch "$VENV_DIR/.deps_ok"
+    fi
+) 200>"$LOCK_FILE"
+
+source "$VENV_DIR/bin/activate"
 
 FILENAMES_OUT="$(realpath data/spade_lists)/${DATASET}_test.txt"
 MAX_ARG=""

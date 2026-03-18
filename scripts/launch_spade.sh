@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end SPADE pipeline: download data, convert, evaluate, charts.
+# End-to-end SPADE pipeline: download data, set up venv, convert, evaluate.
 # Run once on the Great Lakes login node, then go to sleep.
 # Jobs chain automatically and requeue on node failure.
 #
@@ -11,25 +11,44 @@
 #   export KAGGLE_API_TOKEN=KGAT_xxxxx
 #   bash scripts/launch_spade.sh
 #
-# Safe to re-run — downloads and completed conversions are skipped.
+# Safe to re-run — downloads, venv, and completed conversions are skipped.
 
 set -euo pipefail
 
 echo "=== SPADE pipeline ==="
 echo ""
 
-# ── Step 1: Download datasets (runs on login node) ──────────────────────────
+# ── Step 1: Download datasets (login node) ───────────────────────────────────
 echo "── Downloading datasets ──"
 bash scripts/download_spade_data.sh
 echo ""
 
-# ── Step 2: Submit SLURM jobs with dependency chaining ───────────────────────
+# ── Step 2: Set up venv (login node — avoids race in SLURM jobs) ─────────────
+echo "── Setting up Python venv ──"
+module load python/3.10.4 2>/dev/null || true
+
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade"
+mkdir -p "$(dirname "$VENV_DIR")"
+
+if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
+    echo "  Creating virtualenv at $VENV_DIR ..."
+    python -m venv "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+    pip install --quiet --upgrade pip
+    pip install --quiet -r requirements_spade.txt
+    touch "$VENV_DIR/.deps_ok"
+    deactivate 2>/dev/null || true
+    echo "  Venv ready."
+else
+    echo "  Venv already set up — skipping."
+fi
+echo ""
+
+# ── Step 3: Submit SLURM jobs with dependency chaining ───────────────────────
 echo "── Submitting SLURM jobs ──"
 
 # --requeue: auto-resubmit on node/preemption failure
 # --dependency=afterany: attempt metrics even if convert had issues
-#   (the eval script checks for missing data and exits cleanly;
-#    re-run this script to retry — completed work is skipped)
 RQ="--requeue"
 
 # FLSea demo — bundled, no conversion needed
