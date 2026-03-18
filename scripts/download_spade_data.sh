@@ -133,7 +133,7 @@ echo ""
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. FLSea-VI — validation split (HuggingFace, ~13 GB parquet)
 # ─────────────────────────────────────────────────────────────────────────────
-FLSEA_RAW="$DATA_ROOT/flsea/raw"
+export FLSEA_RAW="$DATA_ROOT/flsea/raw"
 
 if [[ -d "$FLSEA_RAW" && -n "$(find "$FLSEA_RAW" -name '*.parquet' 2>/dev/null | head -1)" ]]; then
     echo "[FLSea-VI]           Already staged at $FLSEA_RAW — skipping."
@@ -161,7 +161,6 @@ print("  Done.")
 PYEOF
     echo "[FLSea-VI]           Done → $FLSEA_RAW"
 fi
-export FLSEA_RAW
 echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
