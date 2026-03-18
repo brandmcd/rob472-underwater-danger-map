@@ -1,4 +1,9 @@
-# SUIM-Net — Underwater Semantic Segmentation
+# SUIM-Net — Underwater Semantic Segmentation (Goal 1)
+
+> **Project context:** This is Goal 1 of the ROB 472 Underwater Danger Map project.
+> We establish a segmentation baseline on SUIM, then evaluate cross-dataset generalization
+> on DeepFish and USIS10K. The segmentation masks produced here feed into the
+> [danger map fusion](../fusion/) module (Goal 3) alongside SPADE depth maps.
 
 Semantic segmentation of underwater imagery using the SUIM-Net model (Islam et al., 2020).
 Segments scenes into five obstacle-relevant classes and computes pixel-level metrics against

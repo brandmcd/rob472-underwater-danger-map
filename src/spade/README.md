@@ -1,4 +1,9 @@
-# SPADE — Underwater Monocular Depth Estimation
+# SPADE — Underwater Monocular Depth Estimation (Goal 2)
+
+> **Project context:** This is Goal 2 of the ROB 472 Underwater Danger Map project.
+> We benchmark monocular depth estimation on FLSea, SeaThru, and kskin to understand
+> depth accuracy at various ranges. The depth maps produced here feed into the
+> [danger map fusion](../fusion/) module (Goal 3) alongside SUIM-Net segmentation masks.
 
 Metric-scale monocular depth estimation using the SPADE model
 (Zhang et al., 2025 — Sparsity Adaptive Depth Estimator).
@@ -139,23 +144,26 @@ Override at submission time with `--export=WEIGHTS_PATH=/your/path.pt`.
 
 ```bash
 # Set Kaggle token (required for SeaThru download)
-export KAGGLE_API_TOKEN=KGAT_051b1088c21d172a156bf1d5572d4ba9
+export KAGGLE_API_TOKEN=<your-kaggle-token>
 
 bash scripts/download_spade_data.sh
 ```
 
+Get your token from [kaggle.com/settings](https://www.kaggle.com/settings) (API section).
+Both `KGAT_` personal access tokens and classic `{"username":"...","key":"..."}` JSON
+format are supported. The script uses the Kaggle REST API directly (no `kaggle` CLI needed).
+
 What this downloads:
 | Dataset | Source | Size |
 |---------|--------|------|
-| SeaThru | Kaggle API | ~32 GB |
+| SeaThru | Kaggle REST API | ~32 GB |
 | kskin HIMB1 images | tar.gz | varies |
 | kskin HIMB GT depth | tar.gz | varies |
 | FLSea-VI validation | HuggingFace parquet | ~13 GB |
 
-The script skips any dataset already staged.  `KAGGLE_API_TOKEN` is written to
-`~/.kaggle/kaggle.json` automatically if the file does not exist.
+The script skips any dataset already staged.
 
-### Step 3 — Convert to SPADE format (CPU jobs, ~2 h each)
+### Step 3 — Convert to SPADE format (CPU jobs, long jobs)
 
 ```bash
 sbatch --export=DATASET=seathru cluster/spade_convert.sbat
