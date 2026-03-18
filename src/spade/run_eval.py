@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -38,6 +39,29 @@ def _load_dataset_config(tag: str) -> dict:
             cfg = yaml.safe_load(f) or {}
         return cfg.get("datasets", {}).get(tag, {})
     return {}
+
+
+def _load_eval_model():
+    """Load SPADE's eval_model from vendor/SPADE/evaluate.py by absolute path."""
+    eval_py = VENDOR_SPADE / "evaluate.py"
+    if not eval_py.exists():
+        raise FileNotFoundError(
+            "SPADE evaluate entrypoint not found at "
+            f"{eval_py}. Ensure submodules are initialized: "
+            "git submodule update --init --recursive"
+        )
+
+    spec = importlib.util.spec_from_file_location("spade_vendor_evaluate", eval_py)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Failed to build import spec for {eval_py}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    if not hasattr(module, "eval_model"):
+        raise AttributeError(f"{eval_py} does not define eval_model")
+
+    return module.eval_model
 
 
 def main() -> None:
@@ -117,7 +141,7 @@ def main() -> None:
     sys.path.insert(0, str(VENDOR_SPADE))
     os.chdir(VENDOR_SPADE)
 
-    from evaluate import eval_model  # noqa: E402
+    eval_model = _load_eval_model()
 
     print(f"=== SPADE evaluation: {args.dataset} | ranges {ranges} m ===")
     metrics_list = eval_model(
