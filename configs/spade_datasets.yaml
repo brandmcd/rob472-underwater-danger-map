@@ -49,18 +49,3 @@ datasets:
     min_depth: 0.1
     max_depth: 18.0
     eval_ranges: [10, 5, 2]
-
-  # --- DROP Lab HIMB stereo (K. Skinner, Univ. Michigan) ---------------------
-  # Source  : https://github.com/kskin/data
-  # Images  : http://www.umich.edu/~dropopen2/DROPUWStereo_HIMB1_docksite.tar.gz
-  # GT depth: http://www.umich.edu/~dropopen2/DROPUWStereo_HIMB_ground.tar.gz
-  # Download: bash scripts/download_spade_data.sh
-  # Convert : sbatch --export=DATASET=kskin cluster/spade_convert.sbat
-  #   → writes data/spade_lists/kskin_test.txt  (absolute paths)
-  kskin:
-    filenames_file_eval: ""     # filled by convert_kskin.py at runtime
-    data_path_eval: "/"
-    gt_path_eval:   "/"
-    min_depth: 0.1
-    max_depth: 20.0
-    eval_ranges: [10, 5, 2]

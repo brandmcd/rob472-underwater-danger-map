@@ -57,22 +57,18 @@ echo "  metrics  flsea_demo → $DEMO_MET"
 
 # Convert raw datasets to SPADE format (CPU)
 ST_CONV=$(sbatch --parsable $RQ --export=DATASET=seathru cluster/spade_convert.sbat)
-KS_CONV=$(sbatch --parsable $RQ --export=DATASET=kskin   cluster/spade_convert.sbat)
 FL_CONV=$(sbatch --parsable $RQ --export=DATASET=flsea   cluster/spade_convert.sbat)
 echo "  convert  seathru    → $ST_CONV"
-echo "  convert  kskin      → $KS_CONV"
 echo "  convert  flsea      → $FL_CONV"
 
 # Evaluation + charts (GPU) — run after convert finishes (success or fail)
 ST_MET=$(sbatch --parsable $RQ --dependency=afterany:${ST_CONV} --export=DATASET=seathru cluster/spade_metrics.sbat)
-KS_MET=$(sbatch --parsable $RQ --dependency=afterany:${KS_CONV} --export=DATASET=kskin   cluster/spade_metrics.sbat)
 FL_MET=$(sbatch --parsable $RQ --dependency=afterany:${FL_CONV} --export=DATASET=flsea   cluster/spade_metrics.sbat)
 echo "  metrics  seathru    → $ST_MET  (after $ST_CONV)"
-echo "  metrics  kskin      → $KS_MET  (after $KS_CONV)"
 echo "  metrics  flsea      → $FL_MET  (after $FL_CONV)"
 
 echo ""
-echo "=== 7 jobs submitted. Monitor with: squeue -u \$USER ==="
+echo "=== 5 jobs submitted. Monitor with: squeue -u \$USER ==="
 echo ""
 echo "If anything fails, just re-run this script — downloads and"
 echo "completed conversions are skipped. Only remaining work runs."

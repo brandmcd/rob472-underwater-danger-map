@@ -13,7 +13,6 @@
 #
 # Usage:
 #   sbatch --export=DATASET=seathru cluster/spade_convert.sbat
-#   sbatch --export=DATASET=kskin   cluster/spade_convert.sbat
 #   sbatch --export=DATASET=flsea   cluster/spade_convert.sbat
 #
 # Optional overrides:
@@ -98,28 +97,8 @@ elif [[ "$DATASET" == "flsea" ]]; then
         --filenames_out  "$FILENAMES_OUT" \
         $MAX_ARG
 
-elif [[ "$DATASET" == "kskin" ]]; then
-    IMG_DIR="$DATA_ROOT/kskin/HIMB1"
-    GT_DIR="$DATA_ROOT/kskin/HIMB_ground"
-    OUT_DIR="$DATA_ROOT/kskin/spade"
-
-    for dir in "$IMG_DIR" "$GT_DIR"; do
-        if [[ ! -d "$dir" ]]; then
-            echo "ERROR: kskin data not found at $dir"
-            echo "Run: bash scripts/download_spade_data.sh"
-            exit 1
-        fi
-    done
-
-    python -m src.spade.convert_kskin \
-        --img_dir        "$IMG_DIR" \
-        --gt_dir         "$GT_DIR" \
-        --out_dir        "$OUT_DIR" \
-        --filenames_out  "$FILENAMES_OUT" \
-        $MAX_ARG
-
 else
-    echo "ERROR: Unknown DATASET='$DATASET'. Supported values: seathru, kskin, flsea"
+    echo "ERROR: Unknown DATASET='$DATASET'. Supported values: seathru, flsea"
     exit 1
 fi
 

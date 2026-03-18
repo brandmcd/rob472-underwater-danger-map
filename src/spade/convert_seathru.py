@@ -12,13 +12,14 @@ and SFM-reconstructed dense depth maps (metres).  This script:
 
 Expected raw directory layout (as delivered by the Kaggle download):
     <raw_dir>/
-      D1/ Resize_30/ *.png                    ← RGB
-      D1/ Resize_30/ *_depth.tif (or .tiff)   ← depth, metres, float32
-      D2/ ...
-      ...
+      D1/D1/linearPNG/*.png            ← RGB images
+      D1/D1/depth/depthT_*.tif         ← depth, metres, float32
+      D3/D3/linearPNG/*.png
+      D3/D3/depth_resized/*.tif
+      D4/ ...
 
-The Kaggle mirror uses slightly different naming conventions across scenes;
-the pairing logic is heuristic-based and handles the common patterns.
+RGB and depth are paired by numeric ID extracted from the filenames
+(e.g. S03082.png ↔ depthT_S03082.tif) within the same scene directory.
 
 Usage:
     python -m src.spade.convert_seathru \\
@@ -51,40 +52,37 @@ from ._spade_utils import load_depth, generate_sparse_csv
 def find_pairs(raw_dir: Path) -> list[tuple[Path, Path]]:
     """Return (rgb_path, depth_path) pairs by scanning raw_dir recursively.
 
-    SeaThru naming patterns observed across Kaggle mirrors:
-      RGB   : <scene>/<sub>/<stem>.png       — no 'depth' in the filename
-      Depth : <stem>_depth.tif  |  <stem>_SeaErra_abs_depth.tif  |  etc.
+    Actual Kaggle SeaThru layout:
+      raw/D1/D1/linearPNG/S03082.png     ← RGB
+      raw/D1/D1/depth/depthT_S03082.tif  ← depth (or depth_resized/)
+
+    Pairing: extract the numeric ID from each filename and match RGB ↔ depth
+    within the same scene directory (e.g. D1/D1/).
     """
+    # Index all depth TIFs by (scene_dir, numeric_id)
+    depth_index: dict[tuple[str, str], Path] = {}
+    for tif in sorted(raw_dir.rglob("*.tif")):
+        m = re.search(r"(\d+)", tif.stem)
+        if not m:
+            continue
+        # scene_dir = parent of the depth/ or depth_resized/ folder
+        scene = str(tif.parent.parent)
+        depth_index[(scene, m.group())] = tif
+
+    # Find RGB PNGs and pair with depth by scene + numeric ID
     pairs: list[tuple[Path, Path]] = []
-    for rgb_path in sorted(raw_dir.rglob("*.png")):
-        stem   = rgb_path.stem
-        parent = rgb_path.parent
-        if "depth" in stem.lower():
-            continue  # skip depth-encoded PNGs
-
-        # Common depth filename patterns (highest priority first)
-        candidates = [
-            parent / f"{stem}_depth.tif",
-            parent / f"{stem}_depth.tiff",
-            parent / f"{stem}_SeaErra_abs_depth.tif",
-            parent / f"{stem}_SeaErra_abs_depth.tiff",
-            parent / f"{stem}.tif",
-            parent / f"{stem}.tiff",
-            parent / f"{stem}_depth.png",
-        ]
-        depth_path = next((c for c in candidates if c.exists()), None)
-
-        # Fallback: any .tif in the same directory that shares a numeric prefix
-        if depth_path is None:
-            m = re.search(r"\d+", stem)
-            if m:
-                prefix = m.group()
-                matches = sorted(parent.glob(f"*{prefix}*.tif"))
-                if matches:
-                    depth_path = matches[0]
-
-        if depth_path is not None:
-            pairs.append((rgb_path, depth_path))
+    for png in sorted(raw_dir.rglob("*.png")):
+        # Skip PNGs inside depth directories
+        if "depth" in png.parent.name.lower():
+            continue
+        m = re.search(r"(\d+)", png.stem)
+        if not m:
+            continue
+        # scene_dir = parent of the linearPNG/ (or similar) folder
+        scene = str(png.parent.parent)
+        key = (scene, m.group())
+        if key in depth_index:
+            pairs.append((png, depth_index[key]))
 
     return pairs
 

@@ -1,7 +1,7 @@
 # SPADE — Underwater Monocular Depth Estimation (Goal 2)
 
 > **Project context:** This is Goal 2 of the ROB 472 Underwater Danger Map project.
-> We benchmark monocular depth estimation on FLSea, SeaThru, and kskin to understand
+> We benchmark monocular depth estimation on FLSea and SeaThru to understand
 > depth accuracy at various ranges. The depth maps produced here feed into the
 > [danger map fusion](../fusion/) module (Goal 3) alongside SUIM-Net segmentation masks.
 
@@ -24,7 +24,6 @@ Takes RGB images and sparse depth hint points as inputs and produces dense depth
 | `flsea_demo` | FLSea demo (bundled) | `vendor/SPADE/example_data/` | 15 | Yes (SLAM-reconstructed, metres) |
 | `flsea` | FLSea-VI validation split (Randall & Treibitz, 2023) | [HuggingFace](https://huggingface.co/datasets/bhowmikabhimanyu/flsea-vi) | ~4,490 | Yes (depth image, metres) |
 | `seathru` | SeaThru (Akkaynak & Treibitz, CVPR 2019) | [Kaggle](https://www.kaggle.com/datasets/colorlabeilat/seathru-dataset) | ~1,100 | Yes (SFM-reconstructed, metres) |
-| `kskin` | DROP Lab HIMB stereo (K. Skinner, U-Michigan) | [GitHub](https://github.com/kskin/data) | varies | Yes (stereo GT, metres) |
 
 `flsea_demo` is bundled — no download needed.  All others require download + conversion (see Steps 2–3 below).
 
@@ -36,12 +35,11 @@ Takes RGB images and sparse depth hint points as inputs and produces dense depth
 src/spade/
   run_eval.py         # evaluation wrapper → metrics CSV
   convert_seathru.py  # SeaThru raw → SPADE format (depth TIFF + sparse CSV)
-  convert_kskin.py    # kskin HIMB raw → SPADE format
   convert_flsea.py    # FLSea-VI parquet → SPADE format
   chart_metrics.py    # metrics CSV → report-quality charts
   _spade_utils.py     # shared depth loading + sparse CSV generation
 cluster/
-  spade_convert.sbat  # SLURM: CPU data conversion (seathru / kskin / flsea)
+  spade_convert.sbat  # SLURM: CPU data conversion (seathru / flsea)
   spade_metrics.sbat  # SLURM: GPU evaluation + charting
 scripts/
   build_spade_weights.py   # assemble checkpoint from public DA V2 backbone
@@ -157,8 +155,6 @@ What this downloads:
 | Dataset | Source | Size |
 |---------|--------|------|
 | SeaThru | Kaggle REST API | ~32 GB |
-| kskin HIMB1 images | tar.gz | varies |
-| kskin HIMB GT depth | tar.gz | varies |
 | FLSea-VI validation | HuggingFace parquet | ~13 GB |
 
 The script skips any dataset already staged.
@@ -167,7 +163,6 @@ The script skips any dataset already staged.
 
 ```bash
 sbatch --export=DATASET=seathru cluster/spade_convert.sbat
-sbatch --export=DATASET=kskin   cluster/spade_convert.sbat
 sbatch --export=DATASET=flsea   cluster/spade_convert.sbat
 ```
 
@@ -191,7 +186,6 @@ sbatch cluster/spade_metrics.sbat
 # Full benchmark datasets
 sbatch --export=DATASET=flsea   cluster/spade_metrics.sbat
 sbatch --export=DATASET=seathru cluster/spade_metrics.sbat
-sbatch --export=DATASET=kskin   cluster/spade_metrics.sbat
 ```
 
 ### Step 5 — Monitor jobs
@@ -217,7 +211,7 @@ scp -r "brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/repo
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATASET` | `seathru` | `seathru`, `kskin`, or `flsea` |
+| `DATASET` | `seathru` | `seathru` or `flsea` |
 | `DATA_ROOT` | `$SCRATCH/data` | Root of staged data |
 | `MAX_IMAGES` | *(all)* | Cap image count for smoke-testing |
 
@@ -259,7 +253,6 @@ Generate a cross-dataset comparison chart by passing multiple CSVs:
 python -m src.spade.chart_metrics \
     --csv reports/spade/flsea_metrics.csv \
           reports/spade/seathru_metrics.csv \
-          reports/spade/kskin_metrics.csv
 # → reports/spade/figures/comparison/dataset_comparison.png
 ```
 
@@ -336,7 +329,7 @@ best-model row (MAE 0.131 m).
 
 ### Sparse features from dense depth
 
-For SeaThru, kskin, and FLSea-VI (HuggingFace), which ship dense depth maps, the
+For SeaThru and FLSea-VI (HuggingFace), which ship dense depth maps, the
 converters simulate sparse hints by:
 
 1. Detecting Shi-Tomasi corners in the RGB image (≈400–500 per image)

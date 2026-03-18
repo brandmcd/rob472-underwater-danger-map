@@ -3,9 +3,7 @@
 #
 # Datasets:
 #   1. SeaThru — Akkaynak & Treibitz CVPR 2019 (Kaggle, ~32 GB)
-#   2. kskin HIMB1 — DROP Lab BlueROV2 stereo images (U-Michigan, tar.gz)
-#   3. kskin HIMB ground truth depth (U-Michigan, tar.gz)
-#   4. FLSea-VI — validation split, HuggingFace (~13 GB parquet)
+#   2. FLSea-VI — validation split, HuggingFace (~13 GB parquet)
 #
 # Usage:
 #   bash scripts/download_spade_data.sh                          # Great Lakes default
@@ -17,8 +15,7 @@
 #   ~/.kaggle/kaggle.json                       ← classic file-based auth
 #
 # After this script, convert each dataset to SPADE format:
-#   sbatch --export=DATASET=seathru  cluster/spade_convert.sbat
-#   sbatch --export=DATASET=kskin    cluster/spade_convert.sbat
+#   sbatch --export=DATASET=seathru cluster/spade_convert.sbat
 #   sbatch --export=DATASET=flsea   cluster/spade_convert.sbat
 
 set -euo pipefail
@@ -28,7 +25,7 @@ mkdir -p "$DATA_ROOT"
 echo "Data root: $DATA_ROOT"
 echo ""
 
-# Load Python 3.10 on Great Lakes — system python3 is 3.6 (too old for kaggle/pip).
+# Load Python 3.10 on Great Lakes — system python3 is 3.6 (too old for pip).
 # module load is a no-op outside SLURM/Great Lakes environments.
 module load python/3.10.4 2>/dev/null || true
 
@@ -96,45 +93,7 @@ fi
 echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. kskin HIMB1 images (DROP Lab, BlueROV2 docksite)
-# ─────────────────────────────────────────────────────────────────────────────
-HIMB1_DIR="$DATA_ROOT/kskin/HIMB1"
-HIMB1_URL="http://www.umich.edu/~dropopen2/DROPUWStereo_HIMB1_docksite.tar.gz"
-
-if [[ -d "$HIMB1_DIR" && -n "$(find "$HIMB1_DIR" \( -name '*.jpg' -o -name '*.png' \) 2>/dev/null | head -1)" ]]; then
-    echo "[kskin HIMB1 images] Already staged — skipping."
-else
-    echo "[kskin HIMB1 images] Downloading..."
-    mkdir -p "$HIMB1_DIR"
-    wget -q --show-progress -O "$HIMB1_DIR/HIMB1.tar.gz" "$HIMB1_URL"
-    echo "[kskin HIMB1 images] Extracting..."
-    tar -xf "$HIMB1_DIR/HIMB1.tar.gz" -C "$HIMB1_DIR" --strip-components=1
-    rm "$HIMB1_DIR/HIMB1.tar.gz"
-    echo "[kskin HIMB1 images] Done → $HIMB1_DIR"
-fi
-echo ""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. kskin HIMB ground truth depth
-# ─────────────────────────────────────────────────────────────────────────────
-HIMB_GT_DIR="$DATA_ROOT/kskin/HIMB_ground"
-HIMB_GT_URL="http://www.umich.edu/~dropopen2/DROPUWStereo_HIMB_ground.tar.gz"
-
-if [[ -d "$HIMB_GT_DIR" && -n "$(find "$HIMB_GT_DIR" \( -name '*.npy' -o -name '*.tif' -o -name '*.png' \) 2>/dev/null | head -1)" ]]; then
-    echo "[kskin GT depth]     Already staged — skipping."
-else
-    echo "[kskin GT depth]     Downloading..."
-    mkdir -p "$HIMB_GT_DIR"
-    wget -q --show-progress -O "$HIMB_GT_DIR/HIMB_ground.tar.gz" "$HIMB_GT_URL"
-    echo "[kskin GT depth]     Extracting..."
-    tar -xf "$HIMB_GT_DIR/HIMB_ground.tar.gz" -C "$HIMB_GT_DIR" --strip-components=1
-    rm "$HIMB_GT_DIR/HIMB_ground.tar.gz"
-    echo "[kskin GT depth]     Done → $HIMB_GT_DIR"
-fi
-echo ""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. FLSea-VI — validation split (HuggingFace, ~13 GB parquet)
+# 2. FLSea-VI — validation split (HuggingFace, ~13 GB parquet)
 # ─────────────────────────────────────────────────────────────────────────────
 export FLSEA_RAW="$DATA_ROOT/flsea/raw"
 
@@ -169,14 +128,10 @@ echo ""
 # ─────────────────────────────────────────────────────────────────────────────
 echo "=== All downloads complete ==="
 echo ""
-echo "Next — convert each dataset to SPADE format (CPU jobs, ~2h each):"
+echo "Next — convert each dataset to SPADE format:"
 echo ""
 echo "  sbatch --export=DATASET=seathru cluster/spade_convert.sbat"
-echo "  sbatch --export=DATASET=kskin   cluster/spade_convert.sbat"
 echo "  sbatch --export=DATASET=flsea   cluster/spade_convert.sbat"
 echo ""
-echo "Then run evaluation + charting (GPU jobs):"
-echo ""
-echo "  sbatch --export=DATASET=seathru cluster/spade_metrics.sbat"
-echo "  sbatch --export=DATASET=kskin   cluster/spade_metrics.sbat"
-echo "  sbatch --export=DATASET=flsea   cluster/spade_metrics.sbat"
+echo "Or run everything automatically:"
+echo "  bash scripts/launch_spade.sh"

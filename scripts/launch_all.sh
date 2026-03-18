@@ -63,18 +63,14 @@ if [[ "$PIPELINE" == "all" || "$PIPELINE" == "spade" ]]; then
 
     # Convert raw datasets to SPADE format (CPU)
     ST_CONV=$(sbatch --parsable --export=DATASET=seathru cluster/spade_convert.sbat)
-    KS_CONV=$(sbatch --parsable --export=DATASET=kskin   cluster/spade_convert.sbat)
     FL_CONV=$(sbatch --parsable --export=DATASET=flsea   cluster/spade_convert.sbat)
     echo "  convert  seathru    → $ST_CONV"
-    echo "  convert  kskin      → $KS_CONV"
     echo "  convert  flsea      → $FL_CONV"
 
     # Evaluation + charts (GPU) — wait for conversion
     ST_MET=$(sbatch --parsable --dependency=afterok:${ST_CONV} --export=DATASET=seathru cluster/spade_metrics.sbat)
-    KS_MET=$(sbatch --parsable --dependency=afterok:${KS_CONV} --export=DATASET=kskin   cluster/spade_metrics.sbat)
     FL_MET=$(sbatch --parsable --dependency=afterok:${FL_CONV} --export=DATASET=flsea   cluster/spade_metrics.sbat)
     echo "  metrics  seathru    → $ST_MET  (after $ST_CONV)"
-    echo "  metrics  kskin      → $KS_MET  (after $KS_CONV)"
     echo "  metrics  flsea      → $FL_MET  (after $FL_CONV)"
     echo ""
 fi

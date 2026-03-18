@@ -15,7 +15,7 @@ based on its semantic class and estimated proximity to the robot.
 | # | Goal | Module | Description |
 |---|------|--------|-------------|
 | 1 | Semantic segmentation baseline | [SUIM-Net](src/suimnet/README.md) | Segment underwater scenes into obstacle-relevant classes (fish, reef, wreck, diver, robot). Evaluate on SUIM, DeepFish, and USIS10K to measure cross-dataset generalization. |
-| 2 | Monocular depth estimation | [SPADE](src/spade/README.md) | Estimate metric-scale depth from a single RGB image + sparse depth hints. Benchmark on FLSea, SeaThru, and kskin datasets. |
+| 2 | Monocular depth estimation | [SPADE](src/spade/README.md) | Estimate metric-scale depth from a single RGB image + sparse depth hints. Benchmark on FLSea and SeaThru datasets. |
 | 3 | Danger map fusion | `src/fusion/` | Combine segmentation masks and depth maps into a spatial risk map that highlights nearby obstacles by type and distance. |
 
 ---
@@ -40,7 +40,7 @@ cluster/
   spade_metrics.sbat    # SLURM: depth evaluation + charts (GPU)
 scripts/
   download_suimnet_data.sh  # download SUIM, DeepFish, USIS10K
-  download_spade_data.sh    # download SeaThru, kskin, FLSea-VI
+  download_spade_data.sh    # download SeaThru, FLSea-VI
   build_spade_weights.py    # assemble SPADE checkpoint from DA V2 backbone
   launch_all.sh             # submit all SLURM jobs with dependency chaining
 vendor/
@@ -72,7 +72,6 @@ logs/                 # SLURM job logs (gitignored)
 | `flsea_demo` | FLSea demo (bundled) | 15 | Smoke-test, no download needed |
 | `flsea` | [FLSea-VI validation](https://huggingface.co/datasets/bhowmikabhimanyu/flsea-vi) | ~4,490 | Quantitative benchmark (MAE, RMSE, delta-accuracy) |
 | `seathru` | [SeaThru](https://www.kaggle.com/datasets/colorlabeilat/seathru-dataset) | ~1,100 | Quantitative benchmark |
-| `kskin` | [DROP Lab HIMB stereo](https://github.com/kskin/data) | varies | Quantitative benchmark |
 
 ---
 
@@ -111,7 +110,7 @@ git pull && git submodule update --init --recursive
 # SUIM-Net datasets (SUIM, DeepFish, USIS10K)
 bash scripts/download_suimnet_data.sh
 
-# SPADE datasets (SeaThru, kskin, FLSea-VI)
+# SPADE datasets (SeaThru, FLSea-VI)
 export KAGGLE_API_TOKEN=<your-kaggle-token>
 bash scripts/download_spade_data.sh
 ```
