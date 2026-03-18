@@ -162,7 +162,7 @@ def plot_iou_heatmap(df: pd.DataFrame, out_dir: Path, title_prefix: str, dpi: in
     pivot     = pivot[col_order]
 
     n_images = len(pivot.columns)
-    fig_w    = max(12, n_images * 0.11)
+    fig_w    = min(max(12, n_images * 0.11), 60)   # cap at 60 in to avoid OOM on large datasets
     fig, ax  = plt.subplots(figsize=(fig_w, 3.8))
 
     im = ax.imshow(pivot.values, aspect="auto", cmap="RdYlGn", vmin=0, vmax=1,
