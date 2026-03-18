@@ -4,26 +4,58 @@ Metric-scale monocular depth estimation using the SPADE model
 (Zhang et al., 2025 — Sparsity Adaptive Depth Estimator).
 Takes RGB images and sparse depth hint points as inputs and produces dense depth maps.
 
+> **Weights note:** The official pretrained weights on Google Drive are access-restricted
+> (upstream issue [#1](https://github.com/Jayzhang2333/Sparsity-Adaptive-Depth-Estimator/issues/1)).
+> Use `scripts/build_spade_weights.py` (see Step 1 below) to assemble a runnable checkpoint
+> from the public Depth Anything V2 ViT-S backbone.  Performance matches the **DA V2 + GA**
+> baseline tier from the paper (MAE ≈ 0.28 m at ≤10 m) rather than the full trained model.
+
+---
+
+## Datasets
+
+| Key | Dataset | Source | Images | GT depth |
+|-----|---------|--------|--------|----------|
+| `flsea_demo` | FLSea demo (bundled) | `vendor/SPADE/example_data/` | 15 | Yes (SLAM-reconstructed, metres) |
+| `flsea` | FLSea-VI validation split (Randall & Treibitz, 2023) | [HuggingFace](https://huggingface.co/datasets/bhowmikabhimanyu/flsea-vi) | ~4,490 | Yes (depth image, metres) |
+| `seathru` | SeaThru (Akkaynak & Treibitz, CVPR 2019) | [Kaggle](https://www.kaggle.com/datasets/colorlabeilat/seathru-dataset) | ~1,100 | Yes (SFM-reconstructed, metres) |
+| `kskin` | DROP Lab HIMB stereo (K. Skinner, U-Michigan) | [GitHub](https://github.com/kskin/data) | varies | Yes (stereo GT, metres) |
+
+`flsea_demo` is bundled — no download needed.  All others require download + conversion (see Steps 2–3 below).
+
 ---
 
 ## Project structure
 
 ```
-src/spade/              # this module (wrappers / docs)
+src/spade/
+  run_eval.py         # evaluation wrapper → metrics CSV
+  convert_seathru.py  # SeaThru raw → SPADE format (depth TIFF + sparse CSV)
+  convert_kskin.py    # kskin HIMB raw → SPADE format
+  convert_flsea.py    # FLSea-VI parquet → SPADE format
+  chart_metrics.py    # metrics CSV → report-quality charts
+  _spade_utils.py     # shared depth loading + sparse CSV generation
 cluster/
-  spade_infer.sbat      # SLURM: GPU inference + evaluation
+  spade_convert.sbat  # SLURM: CPU data conversion (seathru / kskin / flsea)
+  spade_metrics.sbat  # SLURM: GPU evaluation + charting
+scripts/
+  build_spade_weights.py   # assemble checkpoint from public DA V2 backbone
+  download_spade_data.sh   # download datasets (Kaggle / HuggingFace / tar.gz)
+configs/
+  spade_datasets.yaml      # per-dataset depth range, filenames list, etc.
 vendor/SPADE/
-  evaluate.py           # upstream evaluation entry-point
-  UnderwaterDepth/      # model architecture and data loaders
-  DataLists/            # filenames lists for datasets
-  example_data/         # 15-image FLSea demo subset (bundled)
+  evaluate.py         # upstream evaluation entry-point (DO NOT MODIFY)
+  UnderwaterDepth/    # model architecture and data loaders
+  DataLists/          # FLSea filenames lists (bundled)
+  example_data/       # 15-image FLSea demo (bundled)
 requirements_spade.txt  # PyTorch pip dependencies
-reports/spade/          # output depth visualisations
+data/spade_lists/       # generated filenames lists (gitignored, machine-specific)
+reports/spade/          # metrics CSVs, charts, depth visualisations
 ```
 
 ---
 
-## Quick-start (local)
+## Quick-start (local, FLSea demo — no download needed)
 
 ### 1. Set up environment
 
@@ -33,143 +65,139 @@ SPADE uses **PyTorch**, not TensorFlow. Create a separate venv:
 python3 -m venv .venv-spade && source .venv-spade/bin/activate
 pip install --upgrade pip
 pip install -r requirements_spade.txt
+pip install timm einops          # needed by the DAT model layers
 ```
 
-Or use the conda environment bundled with the vendor code:
+### 2. Build pretrained weights
+
+The official weights are not publicly accessible.  Run this once to assemble a
+checkpoint from the public Depth Anything V2 ViT-S backbone:
 
 ```bash
-conda env create -f vendor/SPADE/environment.yml
-conda activate spade
+python scripts/build_spade_weights.py
+# writes ~/Downloads/underwater_depth_pipeline.pt
 ```
 
-### 2. Download pretrained weights
+The script downloads DA V2 ViT-S (~100 MB) from HuggingFace automatically.
+The output file is ~400 MB.
 
-Weights are too large for git. Download from the link in `vendor/SPADE/README.md`
-(Google Drive) and place the `.pt` file at a location of your choosing, e.g.:
-
-```
-/path/to/weights/underwater_depth_pipeline.pt
-```
-
-### 3. Smoke-test with bundled FLSea demo data
-
-The repo ships 15 FLSea images + sparse CSV features + ground-truth depth in
-`vendor/SPADE/example_data/`. No extra download needed:
+### 3. Smoke-test with bundled FLSea demo (15 images, no extra data)
 
 ```bash
-cd vendor/SPADE
+# Evaluation → CSV + depth images
+python -m src.spade.run_eval \
+    --dataset    flsea_demo \
+    --weights    ~/Downloads/underwater_depth_pipeline.pt \
+    --save_image
 
-python evaluate.py \
-    -m SPADE \
-    --pretrained_resource "local::/path/to/weights/underwater_depth_pipeline.pt" \
-    -d flsea_sparse_feature \
-    -r 10 5 2 \
-    --save-image \
-    --output-image-path ../../reports/spade/example
+# Charts
+python -m src.spade.chart_metrics --csv reports/spade/flsea_demo_metrics.csv
 ```
 
-Depth visualisations saved to `reports/spade/example/`. Metrics printed to terminal.
-
-### 4. Run on any dataset
-
-**Step 1 — Prepare a filenames file** (relative to `vendor/SPADE/`):
-
-Each line lists three paths: RGB image · ground-truth depth · sparse features CSV.
-
-```
-./data/my_dataset/rgb/img001.tiff  ./data/my_dataset/gt/img001_depth.tif  ./data/my_dataset/sparse/img001.csv
-./data/my_dataset/rgb/img002.tiff  ./data/my_dataset/gt/img002_depth.tif  ./data/my_dataset/sparse/img002.csv
-```
-
-See `vendor/SPADE/DataLists/flease_testing/flsea_demo.txt` as a reference.
-
-**Step 2 — Run evaluation**, overriding the filenames file:
-
-```bash
-cd vendor/SPADE
-
-python evaluate.py \
-    -m SPADE \
-    --pretrained_resource "local::/path/to/weights/underwater_depth_pipeline.pt" \
-    -d flsea_sparse_feature \
-    -r 10 5 2 \
-    --save-image \
-    --output-image-path ../../reports/spade/my_dataset \
-    filenames_file_eval=./DataLists/my_dataset/test.txt
-```
-
-The `filenames_file_eval=<value>` trailing argument overrides the config key directly.
-Additional config keys (`data_path_eval`, `gt_path_eval`, etc.) can be overridden the same way.
+Outputs:
+- Metrics CSV → `reports/spade/flsea_demo_metrics.csv`
+- Charts → `reports/spade/figures/flsea_demo/`
+- Depth images → `reports/spade/flsea_demo/`
 
 ---
 
 ## Running on ARC Great Lakes
 
-### Prerequisites
-
-**1. GitHub SSH key** — same as SUIM-Net; see `src/suimnet/README.md`.
-
-**2. Download and stage weights**
+### Step 0 — Connect and pull
 
 ```bash
-# On Great Lakes (after downloading via browser locally and scp-ing up):
-mkdir -p /scratch/rob572w26_class_root/rob572w26_class/$USER/spade_weights/
-# scp weights file to the above path
-```
-
-Default SLURM script expects weights at:
-```
-/scratch/rob572w26_class_root/rob572w26_class/$USER/spade_weights/underwater_depth_pipeline.pt
-```
-
-Override with `--export=WEIGHTS_PATH=/your/path.pt` at submission time.
-
-**3. (For full FLSea) Stage dataset in scratch**
-
-```
-/scratch/rob572w26_class_root/rob572w26_class/$USER/data/flsea/
-  rgb/              ← TIFF images
-  gt_depth/         ← ground truth depth TIFFs
-  sparse_csv/       ← per-image sparse feature CSVs
-```
-
-Then create a filenames file in `vendor/SPADE/DataLists/` pointing to those paths.
-
-### Step-by-step
-
-**0. Connect and pull**
-
-```bash
-ssh <uniqname>@greatlakes.arc-ts.umich.edu
+ssh brandmcd@greatlakes.arc-ts.umich.edu
 cd ~/rob472-underwater-danger-map
 git pull && git submodule update --init --recursive
 ```
 
-**1. Run inference + evaluation (GPU)**
+### Step 1 — Stage pretrained weights
+
+Run `build_spade_weights.py` **on your local WSL machine** (needs internet + PyTorch):
 
 ```bash
-# FLSea bundled demo data (default, no extra data needed)
-sbatch cluster/spade_infer.sbat
+# On local WSL — build the weights file
+python scripts/build_spade_weights.py
+# → ~/Downloads/underwater_depth_pipeline.pt
 
-# Custom dataset
-sbatch --export=DATASET=flsea_full,FILENAMES_FILE=./DataLists/flsea_testing/full.txt \
-       cluster/spade_infer.sbat
+# Create the weights directory on Great Lakes, then scp the file up
+ssh brandmcd@greatlakes.arc-ts.umich.edu \
+    "mkdir -p /scratch/rob572w26_class_root/rob572w26_class/brandmcd/spade_weights"
+
+scp ~/Downloads/underwater_depth_pipeline.pt \
+    brandmcd@greatlakes.arc-ts.umich.edu:/scratch/rob572w26_class_root/rob572w26_class/brandmcd/spade_weights/
 ```
 
-The script creates a dedicated PyTorch venv at `/scratch/.../venvs/rob472-spade`.
+Default SLURM weight path (already hardcoded in the scripts):
+```
+/scratch/rob572w26_class_root/rob572w26_class/brandmcd/spade_weights/underwater_depth_pipeline.pt
+```
 
-**2. Monitor jobs**
+Override at submission time with `--export=WEIGHTS_PATH=/your/path.pt`.
+
+### Step 2 — Download datasets
+
+```bash
+# Set Kaggle token (required for SeaThru download)
+export KAGGLE_API_TOKEN=KGAT_051b1088c21d172a156bf1d5572d4ba9
+
+bash scripts/download_spade_data.sh
+```
+
+What this downloads:
+| Dataset | Source | Size |
+|---------|--------|------|
+| SeaThru | Kaggle API | ~32 GB |
+| kskin HIMB1 images | tar.gz | varies |
+| kskin HIMB GT depth | tar.gz | varies |
+| FLSea-VI validation | HuggingFace parquet | ~13 GB |
+
+The script skips any dataset already staged.  `KAGGLE_API_TOKEN` is written to
+`~/.kaggle/kaggle.json` automatically if the file does not exist.
+
+### Step 3 — Convert to SPADE format (CPU jobs, ~2 h each)
+
+```bash
+sbatch --export=DATASET=seathru cluster/spade_convert.sbat
+sbatch --export=DATASET=kskin   cluster/spade_convert.sbat
+sbatch --export=DATASET=flsea   cluster/spade_convert.sbat
+```
+
+Each job:
+- Reads raw RGB + dense depth from scratch
+- Generates sparse depth CSVs (Shi-Tomasi corners sampled from dense depth)
+- Saves converted data to `$DATA_ROOT/<dataset>/spade/`
+- Writes `data/spade_lists/<dataset>_test.txt` (absolute paths, gitignored)
+
+Smoke-test with a small cap before running the full job:
+```bash
+sbatch --export=DATASET=flsea,MAX_IMAGES=20 cluster/spade_convert.sbat
+```
+
+### Step 4 — Run evaluation + charts (GPU jobs, ~1 h each)
+
+```bash
+# 15-image bundled demo (no conversion needed — good first sanity check)
+sbatch cluster/spade_metrics.sbat
+
+# Full benchmark datasets
+sbatch --export=DATASET=flsea   cluster/spade_metrics.sbat
+sbatch --export=DATASET=seathru cluster/spade_metrics.sbat
+sbatch --export=DATASET=kskin   cluster/spade_metrics.sbat
+```
+
+### Step 5 — Monitor jobs
 
 ```bash
 squeue -u $USER
 sacct -j <JOBID> --format=JobID,State,Elapsed,ExitCode,MaxRSS
-cat logs/spade-infer-<JOBID>.log
+cat logs/spade-metrics-<JOBID>.log
 ```
 
-**3. Copy results locally**
+### Step 6 — Copy results locally
 
 ```bash
-# From your local machine
+# From your local WSL machine
 scp -r "brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/spade/" ./
 ```
 
@@ -177,93 +205,141 @@ scp -r "brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/repo
 
 ## SLURM script variables
 
-All options can be set via `sbatch --export=VAR=value`:
+### `spade_convert.sbat`
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATASET` | `example` | Tag for the output subdirectory under `reports/spade/` |
-| `WEIGHTS_PATH` | `$SCRATCH/spade_weights/underwater_depth_pipeline.pt` | Absolute path to `.pt` weights |
-| `FILENAMES_FILE` | *(bundled demo list)* | Custom filenames file, relative to `vendor/SPADE/` |
+| `DATASET` | `seathru` | `seathru`, `kskin`, or `flsea` |
+| `DATA_ROOT` | `$SCRATCH/data` | Root of staged data |
+| `MAX_IMAGES` | *(all)* | Cap image count for smoke-testing |
+
+### `spade_metrics.sbat`
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATASET` | `flsea_demo` | Dataset tag — selects filenames list + output subdir |
+| `WEIGHTS_PATH` | `$SCRATCH/spade_weights/underwater_depth_pipeline.pt` | Pretrained `.pt` weights |
 | `EVAL_RANGES` | `10 5 2` | Space-separated depth thresholds in metres |
 
 ---
 
 ## Outputs
 
+### Metrics CSV
+
+`reports/spade/<dataset>_metrics.csv` — one row per evaluation range:
+
+```
+dataset,range_m,mae,rmse,abs_rel,silog,a1,a2,a3,#params
+flsea,10.0,0.277,...
+flsea,5.0,0.170,...
+flsea,2.0,0.099,...
+```
+
+### Charts (300 DPI)
+
+`reports/spade/figures/<dataset>/`
+
+| File | Description |
+|------|-------------|
+| `errors_by_range.png` | MAE / RMSE / AbsRel / SILog grouped by depth range |
+| `accuracy_by_range.png` | δ-accuracy (δ < 1.25, 1.25², 1.25³) by depth range |
+
+Generate a cross-dataset comparison chart by passing multiple CSVs:
+
+```bash
+python -m src.spade.chart_metrics \
+    --csv reports/spade/flsea_metrics.csv \
+          reports/spade/seathru_metrics.csv \
+          reports/spade/kskin_metrics.csv
+# → reports/spade/figures/comparison/dataset_comparison.png
+```
+
 ### Depth visualisations
 
-`reports/spade/<dataset>/` — one PNG per image showing three panels:
-1. RGB input with sparse depth hint points overlaid (colored by depth)
+`reports/spade/<dataset>/` — one PNG per image with three panels:
+1. RGB input + sparse depth hint points (coloured by depth)
 2. Predicted dense depth map
-3. Colorbar (depth in metres)
+3. Depth colorbar (metres)
 
-### Terminal metrics
+---
 
-Printed to the SLURM log (`logs/spade-infer-<JOBID>.log`) for each evaluation range:
+## Metrics reference
 
-| Metric | What it measures |
-|--------|-----------------|
-| **MAE** (m) | Mean absolute depth error |
-| **RMSE** (m) | Root mean squared depth error — penalises large outliers more |
-| **AbsRel** | Absolute relative error: `|pred - gt| / gt` averaged over valid pixels |
-| **SILog** | Scale-invariant log error — measures shape accuracy independent of global scale |
+| Metric | Formula / meaning |
+|--------|-------------------|
+| **MAE** (m) | Mean absolute error: `mean(|pred − gt|)` |
+| **RMSE** (m) | Root mean squared error — penalises large outliers |
+| **AbsRel** | Relative error: `mean(|pred − gt| / gt)` |
+| **SILog** | Scale-invariant log error — shape accuracy, scale-independent |
+| **δ < 1.25** | Fraction of pixels where `max(pred/gt, gt/pred) < 1.25` |
 
-Reported separately for the ≤ 10 m, ≤ 5 m, and ≤ 2 m depth ranges.
+All metrics are computed only over valid pixels (GT depth within the evaluation range).
 
 ---
 
 ## Data format reference
 
-### FLSea dataset structure
-
-```
-rgb/<timestamp>.tiff             ← input RGB image
-gt_depth/<timestamp>_SeaErra_abs_depth.tif ← absolute depth (metres)
-sparse_csv/<timestamp>_features.csv        ← sparse depth hints
-```
-
-### Sparse features CSV format
-
-```
-row,column,depth
-142,387,3.21
-...
-```
-
-Coordinates are in the original image pixel space. The data loader scales them to the
-model's internal feature resolution.
-
-### Filenames list format (one line per sample)
+### SPADE filenames list (one line per sample)
 
 ```
 <rgb_path> <gt_depth_path> <sparse_csv_path>
 ```
 
-All paths relative to `vendor/SPADE/`.
+For converted datasets the paths are **absolute** and `data_path_eval="/"` is set in
+`configs/spade_datasets.yaml` so the data loader resolves them correctly.
+
+### Sparse features CSV
+
+```
+row,column,depth
+25.1,71.4,3.21
+54.4,61.3,1.69
+...
+```
+
+Coordinates are in **240 × 320 space** (matches SPADE's `sparse_feature_height` /
+`sparse_feature_width` config).  The data loader scales them to the model input size
+at inference time.
+
+### Depth files
+
+Float32 TIFF (`.tif`) — values in metres.  Zero / NaN = invalid.
 
 ---
 
 ## Technical notes
 
-### Two-stage pipeline
+### Weights — what `build_spade_weights.py` produces
 
-1. **Global alignment** — a relative depth backbone (Depth Anything V2) produces a
-   shape-accurate but scale-ambiguous depth map. Sparse depth hints align it to metric scale.
-2. **Cascade Conv-Deformable Transformer** — refines pixel-wise depth using the aligned
-   map and sparse hints, producing the final dense metric depth.
+The official checkpoint combines a trained Depth Anything V2 ViT-S backbone with a
+trained DAT (Deformable Attention Transformer) refinement head.  Since the official
+file is access-restricted, `build_spade_weights.py`:
 
-### Inference without sparse hints
+1. Downloads public DA V2 ViT-S weights from HuggingFace
+2. Initialises the full SPADE model (random weights for the DAT head)
+3. Loads the DA V2 backbone into the `pretrained` + `depth_head` submodules
+4. Saves the complete state dict
 
-Set all sparse features to zero (or create a CSV with no rows). The model degrades
-gracefully to a pure monocular depth estimator in this case.
+The result runs the full SPADE two-stage pipeline.  The DAT refinement head is
+randomly initialised, so accuracy matches the **DA V2 + GA** row in the paper table
+(MAE 0.277 m, RMSE 0.563 m, AbsRel 0.081 at ≤10 m on FLSea) rather than the
+best-model row (MAE 0.131 m).
 
-### CUDA requirements
+### Sparse features from dense depth
 
-Requires a CUDA-capable GPU. On Great Lakes, `cuda/11.8.0` is loaded by the SLURM script.
-PyTorch >= 2.1 with CUDA 11.8 is installed via `requirements_spade.txt`.
+For SeaThru, kskin, and FLSea-VI (HuggingFace), which ship dense depth maps, the
+converters simulate sparse hints by:
+
+1. Detecting Shi-Tomasi corners in the RGB image (≈400–500 per image)
+2. Sampling the dense depth map at each corner location
+3. Expressing coordinates in 240 × 320 space
+
+SPADE's architecture is robust to varying sparsity, so this is a valid proxy.
 
 ### Separate venv from SUIM-Net
 
-SPADE requires PyTorch; SUIM-Net requires TensorFlow 2.13. Keep them in separate venvs:
-- `rob472` — TensorFlow / SUIM-Net
-- `rob472-spade` — PyTorch / SPADE
+SPADE requires PyTorch; SUIM-Net requires TensorFlow 2.13.
+
+- `rob472`       — TensorFlow / SUIM-Net
+- `rob472-spade` — PyTorch / SPADE (Great Lakes venv at `$SCRATCH/venvs/rob472-spade`)

@@ -1,0 +1,123 @@
+#!/bin/bash
+#SBATCH --job-name=spade-convert
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=standard
+#SBATCH --qos=class
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=02:00:00
+#SBATCH --output=logs/spade-convert-%j.log
+#
+# Convert a raw dataset to SPADE format (RGB TIFF + depth TIFF + sparse CSV).
+# CPU-only job — no GPU needed.
+#
+# Usage:
+#   sbatch --export=DATASET=seathru cluster/spade_convert.sbat
+#   sbatch --export=DATASET=kskin   cluster/spade_convert.sbat
+#
+# Optional overrides:
+#   MAX_IMAGES=50  — cap images converted (smoke-test)
+#   DATA_ROOT=/custom/path
+#
+# Outputs:
+#   Converted data  : $DATA_ROOT/<DATASET>/spade/
+#   Filenames list  : data/spade_lists/<DATASET>_test.txt  (gitignored)
+
+set -euo pipefail
+
+DATASET="${DATASET:-seathru}"
+DATA_ROOT="${DATA_ROOT:-/scratch/rob572w26_class_root/rob572w26_class/${USER}/data}"
+MAX_IMAGES="${MAX_IMAGES:-}"   # leave empty to convert all images
+
+echo "=== SPADE data conversion: $DATASET ==="
+echo "Job ID    : $SLURM_JOB_ID"
+echo "Node      : $(hostname)"
+echo "Data root : $DATA_ROOT"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs data/spade_lists "reports/spade/${DATASET}"
+
+module load python/3.10.4
+
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade"
+if [[ ! -d "$VENV_DIR" ]]; then
+    echo "Creating virtualenv at $VENV_DIR ..."
+    python -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
+
+pip install --quiet --upgrade pip
+pip install --quiet -r requirements_spade.txt
+# opencv headless is needed for Shi-Tomasi corner detection
+pip install --quiet opencv-python-headless
+
+FILENAMES_OUT="$(realpath data/spade_lists)/${DATASET}_test.txt"
+MAX_ARG=""
+if [[ -n "$MAX_IMAGES" ]]; then
+    MAX_ARG="--max_images $MAX_IMAGES"
+fi
+
+if [[ "$DATASET" == "seathru" ]]; then
+    RAW_DIR="$DATA_ROOT/seathru/raw"
+    OUT_DIR="$DATA_ROOT/seathru/spade"
+
+    if [[ ! -d "$RAW_DIR" ]]; then
+        echo "ERROR: SeaThru raw data not found at $RAW_DIR"
+        echo "Run: bash scripts/download_spade_data.sh"
+        exit 1
+    fi
+
+    python -m src.spade.convert_seathru \
+        --raw_dir        "$RAW_DIR" \
+        --out_dir        "$OUT_DIR" \
+        --filenames_out  "$FILENAMES_OUT" \
+        $MAX_ARG
+
+elif [[ "$DATASET" == "flsea" ]]; then
+    RAW_DIR="$DATA_ROOT/flsea/raw"
+    OUT_DIR="$DATA_ROOT/flsea/spade"
+
+    if [[ ! -d "$RAW_DIR" ]]; then
+        echo "ERROR: FLSea raw data not found at $RAW_DIR"
+        echo "Run: bash scripts/download_spade_data.sh"
+        exit 1
+    fi
+
+    python -m src.spade.convert_flsea \
+        --raw_dir        "$RAW_DIR" \
+        --out_dir        "$OUT_DIR" \
+        --filenames_out  "$FILENAMES_OUT" \
+        $MAX_ARG
+
+elif [[ "$DATASET" == "kskin" ]]; then
+    IMG_DIR="$DATA_ROOT/kskin/HIMB1"
+    GT_DIR="$DATA_ROOT/kskin/HIMB_ground"
+    OUT_DIR="$DATA_ROOT/kskin/spade"
+
+    for dir in "$IMG_DIR" "$GT_DIR"; do
+        if [[ ! -d "$dir" ]]; then
+            echo "ERROR: kskin data not found at $dir"
+            echo "Run: bash scripts/download_spade_data.sh"
+            exit 1
+        fi
+    done
+
+    python -m src.spade.convert_kskin \
+        --img_dir        "$IMG_DIR" \
+        --gt_dir         "$GT_DIR" \
+        --out_dir        "$OUT_DIR" \
+        --filenames_out  "$FILENAMES_OUT" \
+        $MAX_ARG
+
+else
+    echo "ERROR: Unknown DATASET='$DATASET'. Supported values: seathru, kskin, flsea"
+    exit 1
+fi
+
+echo ""
+echo "=== Done. ==="
+echo "  Filenames list : $FILENAMES_OUT"
+echo ""
+echo "Next step:"
+echo "  sbatch --export=DATASET=${DATASET} cluster/spade_metrics.sbat"
