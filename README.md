@@ -20,6 +20,24 @@ based on its semantic class and estimated proximity to the robot.
 
 ---
 
+## Sample results
+
+### Semantic segmentation (SUIM-Net)
+
+| | |
+|:---:|:---:|
+| ![Diver + Robot](figures/suimnet/d_r_47_sidebyside.png) | ![Fish + Reef](figures/suimnet/n_l_100_sidebyside.png) |
+| Diver with robot instrument — HD (blue), RO (red), RI (magenta) | Angelfish near coral — FV (yellow), RI (magenta) |
+
+### Monocular depth estimation (SPADE)
+
+| | |
+|:---:|:---:|
+| ![Depth sample 1](figures/spade/flsea_001833.png) | ![Depth sample 2](figures/spade/flsea_000647.png) |
+| Structured seafloor — depth from ~3 m to ~12 m | Sandy slope with fish — near/far separation |
+
+---
+
 ## Repository structure
 
 ```
@@ -115,21 +133,7 @@ export KAGGLE_API_TOKEN=<your-kaggle-token>
 bash scripts/download_spade_data.sh
 ```
 
-### 3. Build + stage SPADE weights
-
-Run locally (needs internet + PyTorch), then scp to Great Lakes:
-
-```bash
-# Local
-python scripts/build_spade_weights.py
-# -> ~/Downloads/underwater_depth_pipeline.pt
-
-# Upload to cluster
-scp ~/Downloads/underwater_depth_pipeline.pt \
-    <uniqname>@greatlakes.arc-ts.umich.edu:/scratch/rob572w26_class_root/rob572w26_class/<uniqname>/spade_weights/
-```
-
-### 4. Submit all jobs (one command, then go to sleep)
+### 3. Submit all jobs (one command, then go to sleep)
 
 ```bash
 bash scripts/launch_all.sh

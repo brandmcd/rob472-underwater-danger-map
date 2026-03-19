@@ -106,37 +106,50 @@ Outputs:
 
 ## Running on ARC Great Lakes
 
-### Step 0 — Connect and pull
+### Step 0 — Connect, pull, and sync vendor code
 
 ```bash
 ssh brandmcd@greatlakes.arc-ts.umich.edu
 cd ~/rob472-underwater-danger-map
-git pull && git submodule update --init --recursive
+git pull
 ```
 
-### Step 1 — Stage pretrained weights
-
-Run `build_spade_weights.py` **on your local WSL machine** (needs internet + PyTorch):
+The SPADE submodule may fail to init via `git submodule update` due to upstream
+ref issues. If so, rsync `vendor/SPADE/` from your local machine instead:
 
 ```bash
-# On local WSL — build the weights file
-python scripts/build_spade_weights.py
-# → ~/Downloads/underwater_depth_pipeline.pt
-
-# Create the weights directory on Great Lakes, then scp the file up
-ssh brandmcd@greatlakes.arc-ts.umich.edu \
-    "mkdir -p /scratch/rob572w26_class_root/rob572w26_class/brandmcd/spade_weights"
-
-scp ~/Downloads/underwater_depth_pipeline.pt \
-    brandmcd@greatlakes.arc-ts.umich.edu:/scratch/rob572w26_class_root/rob572w26_class/brandmcd/spade_weights/
+# From your LOCAL machine (WSL / Mac / Linux):
+rsync -avz --exclude='__pycache__' \
+  vendor/SPADE/ \
+  brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/vendor/SPADE/
 ```
 
-Default SLURM weight path (already hardcoded in the scripts):
-```
-/scratch/rob572w26_class_root/rob572w26_class/brandmcd/spade_weights/underwater_depth_pipeline.pt
-```
+### Step 1 — Set up venv and weights
 
-Override at submission time with `--export=WEIGHTS_PATH=/your/path.pt`.
+```bash
+# On the Great Lakes login node:
+module load python/3.10.4
+
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/$USER/venvs/rob472-spade"
+
+# Create venv + install deps (skip if .deps_ok exists)
+if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
+    python -m venv "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+    pip install --upgrade pip
+    pip install -r requirements_spade.txt
+    touch "$VENV_DIR/.deps_ok"
+    deactivate
+fi
+
+# Build weights from public DA V2 backbone (skip if already built)
+WEIGHTS="/scratch/rob572w26_class_root/rob572w26_class/$USER/spade_weights/underwater_depth_pipeline.pt"
+if [[ ! -f "$WEIGHTS" ]]; then
+    source "$VENV_DIR/bin/activate"
+    python scripts/build_spade_weights.py --out "$WEIGHTS"
+    deactivate
+fi
+```
 
 ### Step 2 — Download datasets
 
@@ -159,7 +172,7 @@ What this downloads:
 
 The script skips any dataset already staged.
 
-### Step 3 — Convert to SPADE format (CPU jobs, long jobs)
+### Step 3 — Convert to SPADE format (CPU jobs, ~30 min each)
 
 ```bash
 sbatch --export=DATASET=seathru cluster/spade_convert.sbat
@@ -180,9 +193,6 @@ sbatch --export=DATASET=flsea,MAX_IMAGES=20 cluster/spade_convert.sbat
 ### Step 4 — Run evaluation + charts (GPU jobs, ~1 h each)
 
 ```bash
-# 15-image bundled demo (no conversion needed — good first sanity check)
-sbatch cluster/spade_metrics.sbat
-
 # Full benchmark datasets
 sbatch --export=DATASET=flsea   cluster/spade_metrics.sbat
 sbatch --export=DATASET=seathru cluster/spade_metrics.sbat
@@ -194,6 +204,24 @@ sbatch --export=DATASET=seathru cluster/spade_metrics.sbat
 squeue -u $USER
 sacct -j <JOBID> --format=JobID,State,Elapsed,ExitCode,MaxRSS
 cat logs/spade-metrics-<JOBID>.log
+```
+
+### Troubleshooting — venv issues
+
+If a SLURM job fails with `Permission denied` during venv setup, the `.deps_ok`
+flag was removed but the venv still works. Fix by recreating it:
+
+```bash
+touch /scratch/rob572w26_class_root/rob572w26_class/$USER/venvs/rob472-spade/.deps_ok
+```
+
+If a job fails with `ModuleNotFoundError`, install the missing package manually:
+
+```bash
+module load python/3.10.4
+source /scratch/rob572w26_class_root/rob572w26_class/$USER/venvs/rob472-spade/bin/activate
+pip install <missing-package>
+deactivate
 ```
 
 ### Step 6 — Copy results locally
@@ -262,6 +290,15 @@ python -m src.spade.chart_metrics \
 1. RGB input + sparse depth hint points (coloured by depth)
 2. Predicted dense depth map
 3. Depth colorbar (metres)
+
+**Sample depth predictions (FLSea-VI):**
+
+| | |
+|:---:|:---:|
+| ![Depth sample 1](../../figures/spade/flsea_001833.png) | ![Depth sample 2](../../figures/spade/flsea_000647.png) |
+| Structured seafloor — depth from ~3 m to ~12 m | Sandy slope with fish — near/far separation |
+| ![Depth sample 3](../../figures/spade/flsea_003122.png) | |
+| Rocky reef — smooth depth transition across foreground to background |
 
 ---
 

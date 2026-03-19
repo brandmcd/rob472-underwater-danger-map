@@ -225,6 +225,16 @@ scp -r "brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/repo
 ### Prediction masks
 
 Inference writes **RGB-encoded PNG masks** to `outputs/<dataset>/`, one per input image.
+
+**Sample outputs (bundled 8-image test set):**
+
+| | |
+|:---:|:---:|
+| ![Diver + Robot](../../figures/suimnet/d_r_47_sidebyside.png) | ![Wreck + Diver](../../figures/suimnet/w_r_147_sidebyside.png) |
+| Diver holding robot — HD (blue), RO (red), RI (magenta) | Wreck propeller — WR (cyan), HD (blue), RI (magenta) |
+| ![Turtle + Diver](../../figures/suimnet/f_r_329_sidebyside.png) | ![Fish + Reef](../../figures/suimnet/n_l_100_sidebyside.png) |
+| Sea turtle with diver — FV (yellow), HD (blue), RI (magenta) | Angelfish near coral — FV (yellow), RI (magenta) |
+
 Each pixel is colored by segmentation class:
 
 | Class code | Description | RGB color |

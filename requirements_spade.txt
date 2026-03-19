@@ -22,3 +22,5 @@ huggingface-hub
 pyarrow
 Pillow
 opencv-python-headless<4.11
+requests
+pyyaml
