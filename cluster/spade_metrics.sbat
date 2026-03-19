@@ -16,9 +16,8 @@
 #           reports/spade/<DATASET>/        per-image depth visualisations
 #
 # Prerequisites (in order):
-#   1. python scripts/build_spade_weights.py  (local, then scp to cluster)
-#   2. bash scripts/download_spade_data.sh
-#   3. sbatch --export=DATASET=<ds> cluster/spade_convert.sbat
+#   1. bash scripts/download_spade_data.sh  (downloads weights + datasets)
+#   2. sbatch --export=DATASET=<ds> cluster/spade_convert.sbat
 #
 # Usage:
 #   sbatch cluster/spade_metrics.sbat                     # FLSea 15-image demo

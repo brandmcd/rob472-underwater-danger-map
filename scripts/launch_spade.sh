@@ -5,7 +5,7 @@
 #
 # Prerequisites:
 #   export KAGGLE_API_TOKEN=<your-kaggle-token>   (for SeaThru)
-#   Weights at $SCRATCH/spade_weights/underwater_depth_pipeline.pt
+#   Weights are downloaded automatically by download_spade_data.sh
 #
 # Usage:
 #   export KAGGLE_API_TOKEN=KGAT_xxxxx
@@ -44,7 +44,19 @@ else
 fi
 echo ""
 
-# ── Step 3: Submit SLURM jobs with dependency chaining ───────────────────────
+# ── Step 3: Build weights from public DA V2 backbone (if not present) ────────
+WEIGHTS_PATH="/scratch/rob572w26_class_root/rob572w26_class/${USER}/spade_weights/underwater_depth_pipeline.pt"
+if [[ -f "$WEIGHTS_PATH" ]]; then
+    echo "── Weights already at $WEIGHTS_PATH — skipping build."
+else
+    echo "── Building SPADE weights from public Depth Anything V2 backbone ──"
+    source "$VENV_DIR/bin/activate"
+    python scripts/build_spade_weights.py --out "$WEIGHTS_PATH"
+    deactivate 2>/dev/null || true
+fi
+echo ""
+
+# ── Step 4: Submit SLURM jobs with dependency chaining ───────────────────────
 echo "── Submitting SLURM jobs ──"
 
 # --requeue: auto-resubmit on node/preemption failure
