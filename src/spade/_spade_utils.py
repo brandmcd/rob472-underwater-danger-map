@@ -87,12 +87,19 @@ def generate_sparse_csv(
         if (depth_h, depth_w) != (H, W):
             depth = cv2.resize(depth, (W, H), interpolation=cv2.INTER_NEAREST)
 
+    # Depth may have different resolution than the image (e.g. some SeaThru scenes).
+    # Always map corner coordinates into depth space before indexing.
+    dH, dW = depth.shape[:2]
+
     rows_out: list[tuple[float, float, float]] = []
     for c in corners:
         x, y     = c[0]
         row_orig = int(np.clip(round(y), 0, H - 1))
         col_orig = int(np.clip(round(x), 0, W - 1))
-        d = float(depth[row_orig, col_orig])
+        # Map from image space → depth space (no-op when resolutions match)
+        row_d = int(np.clip(round(row_orig * dH / H), 0, dH - 1))
+        col_d = int(np.clip(round(col_orig * dW / W), 0, dW - 1))
+        d = float(depth[row_d, col_d])
         if d <= 0 or not np.isfinite(d):
             continue
         # Scale to SPARSE coordinate space
