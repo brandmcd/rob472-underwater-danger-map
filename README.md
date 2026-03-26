@@ -16,7 +16,7 @@ based on its semantic class and estimated proximity to the robot.
 |---|------|--------|-------------|
 | 1 | Semantic segmentation baseline | [SUIM-Net](src/suimnet/README.md) | Segment underwater scenes into obstacle-relevant classes (fish, reef, wreck, diver, robot). Evaluate on SUIM, DeepFish, and USIS10K to measure cross-dataset generalization. |
 | 2 | Monocular depth estimation | [SPADE](src/spade/README.md) | Estimate metric-scale depth from a single RGB image + sparse depth hints. Benchmark on FLSea and SeaThru datasets. |
-| 3 | Danger map fusion | `src/fusion/` | Combine segmentation masks and depth maps into a spatial risk map that highlights nearby obstacles by type and distance. |
+| 3 | Danger map fusion | [Danger Map](src/danger_map/README.md) | Combine segmentation masks and depth maps into a per-pixel collision-risk score. Outputs a grayscale+heatmap overlay with per-class contour labels for AUV obstacle avoidance. |
 
 ---
 
@@ -36,6 +36,13 @@ based on its semantic class and estimated proximity to the robot.
 | ![Depth sample 1](figures/spade/flsea_001833.png) | ![Depth sample 2](figures/spade/flsea_000647.png) |
 | Structured seafloor — depth from ~3 m to ~12 m | Sandy slope with fish — near/far separation |
 
+### Danger map
+
+| | |
+|:---:|:---:|
+| ![Diver + Robot danger](reports/danger_map/quick_test/d_r_47__danger.png) | ![Wreck + Diver danger](reports/danger_map/quick_test/w_r_147__danger.png) |
+| Diver with robot — HD/RO contours, heatmap shows proximity risk | Wreck + diver — WR/HD contours, grayscale background prevents colour clash |
+
 ---
 
 ## Repository structure
@@ -44,7 +51,9 @@ based on its semantic class and estimated proximity to the robot.
 src/
   suimnet/            # Goal 1: segmentation inference, metrics, charts
   spade/              # Goal 2: depth estimation, evaluation, charts
-  fusion/             # Goal 3: danger map (in progress)
+  danger_map/         # Goal 3: danger map — risk scoring, overlay rendering, video pipeline
+    quick_test.py
+    run_video.py
   common/config.py    # shared config: profile + dataset path resolution
 configs/
   profiles.yaml       # data_root per environment (local, greatlakes)
@@ -56,6 +65,7 @@ cluster/
   suimnet_metrics.sbat  # SLURM: segmentation metrics + charts (CPU)
   spade_convert.sbat    # SLURM: depth data conversion (CPU)
   spade_metrics.sbat    # SLURM: depth evaluation + charts (GPU)
+  (no danger_map sbat — run interactively or via run_video.py)
 scripts/
   download_suimnet_data.sh  # download SUIM, DeepFish, USIS10K
   download_spade_data.sh    # download SeaThru, FLSea-VI
@@ -68,6 +78,7 @@ outputs/              # inference masks (gitignored)
 reports/
   suimnet/            # segmentation metrics CSVs + figures
   spade/              # depth metrics CSVs, charts, depth visualisations
+  danger_map/         # danger map overlays and videos
 logs/                 # SLURM job logs (gitignored)
 ```
 
@@ -112,6 +123,21 @@ Venvs are created automatically by the SLURM scripts on first run.
 
 ---
 
+## Local quick-start (no ARC needed)
+
+The danger map smoke test runs on CPU using 8 bundled images — no datasets or GPU required:
+
+```bash
+git clone <repo_url> && cd rob472-underwater-danger-map
+git submodule update --init --recursive
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m src.danger_map.quick_test
+# Overlays saved to reports/danger_map/quick_test/
+```
+
+---
+
 ## Running on ARC Great Lakes
 
 ### 1. Connect and pull
@@ -143,10 +169,14 @@ This submits every conversion, inference, and metrics job with SLURM
 `--dependency=afterok` so they run in the correct order automatically.
 Monitor with `squeue -u $USER`.
 
-### 5. Copy results locally
+### 4. Copy results locally
 
 ```bash
-scp -r "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/" ./
+# Pull metrics CSVs and charts (not the bulk depth vis PNGs)
+scp "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/spade/flsea_metrics.csv" reports/spade/
+scp "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/spade/seathru_metrics.csv" reports/spade/
+scp -r "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/spade/figures/" reports/spade/
+scp -r "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/suimnet/" reports/
 ```
 
 ---
@@ -155,6 +185,7 @@ scp -r "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/re
 
 - **[SUIM-Net guide](src/suimnet/README.md)** — segmentation datasets, metrics, charts, threshold tuning, SLURM variables
 - **[SPADE guide](src/spade/README.md)** — depth datasets, data conversion, evaluation, weights, SLURM variables
+- **[Danger Map guide](src/danger_map/README.md)** — risk formula, tuning all parameters, overlay design, quick test, full pipeline
 
 ---
 

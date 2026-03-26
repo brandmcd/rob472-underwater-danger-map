@@ -48,6 +48,8 @@ python -m src.danger_map.run_video \
     --max_frames      50
 ```
 
+Where `$DATA_ROOT` = `/scratch/rob572w26_class_root/rob572w26_class/$USER/data` on Great Lakes (set automatically inside SLURM jobs; use the full path on login nodes).
+
 Produces:
 - `reports/danger_map/videos/frames/000001_overlay.png` — one PNG per frame
 - `reports/danger_map/videos/danger_map.mp4` — stitched video
@@ -70,16 +72,34 @@ Produces:
 
 ## Running on ARC Great Lakes
 
-```bash
-ssh brandmcd@greatlakes.arc-ts.umich.edu
-cd ~/rob472-underwater-danger-map
-git pull
+The danger map pipeline requires both SUIM-Net (`.venv`) and SPADE (`.venv-spade`).
+Run it interactively via `srun` or in the SPADE GPU job after evaluation completes.
 
-sbatch cluster/danger_map.sbat
+### One-off run on a GPU node (interactive)
+
+```bash
+srun --account=rob572w26_class --partition=gpu --qos=class --gpus=1 \
+     --cpus-per-task=4 --mem=24G --time=01:00:00 --pty bash
+
+cd ~/rob472-underwater-danger-map
+source /scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade/bin/activate
+
+python -m src.danger_map.run_video \
+    --frames_dir  /scratch/rob572w26_class_root/rob572w26_class/${USER}/data/flsea/spade/rgb \
+    --depth_dir   /scratch/rob572w26_class_root/rob572w26_class/${USER}/data/flsea/spade/depth \
+    --suimnet_weights vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5 \
+    --spade_weights   /scratch/rob572w26_class_root/rob572w26_class/${USER}/spade_weights/underwater_depth_pipeline.pt \
+    --out_dir         reports/danger_map/flsea \
+    --max_frames      100
 ```
 
-The job assumes FLSea-VI data is already staged (from the SPADE pipeline).
-See [src/spade/README.md](../spade/README.md) Steps 2–3 for data conversion.
+Note: `run_video.py` loads SUIM-Net (TensorFlow) and SPADE (PyTorch) in the same process using `sys.path` injection. Activate the `rob472-spade` venv which has PyTorch; TensorFlow is loaded via the repo's `.venv` path automatically.
+
+### Pull results locally
+
+```bash
+scp -r "brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/danger_map/" ./reports/
+```
 
 ---
 

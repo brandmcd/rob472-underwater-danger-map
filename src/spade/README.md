@@ -3,7 +3,7 @@
 > **Project context:** This is Goal 2 of the ROB 472 Underwater Danger Map project.
 > We benchmark monocular depth estimation on FLSea and SeaThru to understand
 > depth accuracy at various ranges. The depth maps produced here feed into the
-> [danger map fusion](../fusion/) module (Goal 3) alongside SUIM-Net segmentation masks.
+> [danger map fusion](../danger_map/) module (Goal 3) alongside SUIM-Net segmentation masks.
 
 Metric-scale monocular depth estimation using the SPADE model
 (Zhang et al., 2025 — Sparsity Adaptive Depth Estimator).
@@ -200,6 +200,8 @@ sbatch --export=DATASET=seathru cluster/spade_metrics.sbat
 
 ### Step 5 — Monitor jobs
 
+> **Note:** `$SCRATCH` is only set automatically inside SLURM jobs. On the login node use the full path: `/scratch/rob572w26_class_root/rob572w26_class/$USER/data`
+
 ```bash
 squeue -u $USER
 sacct -j <JOBID> --format=JobID,State,Elapsed,ExitCode,MaxRSS
@@ -381,3 +383,7 @@ SPADE requires PyTorch; SUIM-Net requires TensorFlow 2.13.
 
 - `rob472`       — TensorFlow / SUIM-Net
 - `rob472-spade` — PyTorch / SPADE (Great Lakes venv at `$SCRATCH/venvs/rob472-spade`)
+
+### SeaThru depth/RGB dimension mismatch (fixed)
+
+Some SeaThru scenes (D3) have depth maps at a different pixel resolution than the RGB images (e.g. depth 2386 px wide, RGB wider). `_spade_utils.py` originally clipped corner coordinates to image bounds and then indexed into the smaller depth array, causing an `IndexError`. This is now fixed: corner coordinates are mapped from image space to depth space before indexing, so mismatched resolutions are handled correctly.
