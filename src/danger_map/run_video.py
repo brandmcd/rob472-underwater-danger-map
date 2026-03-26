@@ -270,18 +270,47 @@ def _load_spade(weights_path: Path):
 
 # ── Overlay frame assembly ────────────────────────────────────────────────────
 
-def _make_side_by_side(rgb: np.ndarray, overlay: np.ndarray) -> np.ndarray:
-    """Concatenate original RGB and danger-map overlay side-by-side."""
-    H, W = rgb.shape[:2]
-    label_h = 30
-    canvas = np.zeros((H + label_h, W * 2, 3), dtype=np.uint8)
-    canvas[label_h:, :W]  = rgb
-    canvas[label_h:, W:]  = overlay
-
-    # Simple text labels
+def _risk_colorbar(width: int, bar_h: int = 22) -> np.ndarray:
+    """Return a (bar_h, width, 3) uint8 RGB colorbar for the HOT colormap."""
+    gradient = np.linspace(0, 255, width, dtype=np.uint8)[np.newaxis, :].repeat(bar_h, axis=0)
+    bar_bgr = cv2.applyColorMap(gradient, cv2.COLORMAP_HOT)
+    bar_rgb = bar_bgr[..., ::-1].copy()
     font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(canvas, "Original",   (10, 22),     font, 0.7, (255, 255, 255), 1)
-    cv2.putText(canvas, "Danger Map", (W + 10, 22), font, 0.7, (255, 255, 255), 1)
+    cv2.putText(bar_rgb, "risk: 0",  (4,        bar_h - 5), font, 0.38, (180, 180, 180), 1)
+    cv2.putText(bar_rgb, "1.0",      (width - 28, bar_h - 5), font, 0.38, ( 30,  30,  30), 1)
+    # Mid-point tick
+    mid = width // 2
+    cv2.putText(bar_rgb, "0.5", (mid - 10, bar_h - 5), font, 0.38, (120, 120, 120), 1)
+    return bar_rgb
+
+
+def _make_side_by_side(rgb: np.ndarray, overlay: np.ndarray) -> np.ndarray:
+    """
+    Assemble a labelled side-by-side frame:
+        [title bar]
+        [ Original RGB  |  Danger Map overlay ]
+        [    risk colorbar (right panel only)  ]
+    """
+    H, W = rgb.shape[:2]
+    title_h  = 30
+    bar_h    = 22
+    total_h  = title_h + H + bar_h
+
+    canvas = np.zeros((total_h, W * 2, 3), dtype=np.uint8)
+
+    # Panels
+    canvas[title_h : title_h + H, :W]  = rgb
+    canvas[title_h : title_h + H, W:]  = overlay
+
+    # Colorbar under the right (danger map) panel
+    bar = _risk_colorbar(W, bar_h)
+    canvas[title_h + H :, W:] = bar
+
+    # Title labels
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(canvas, "Original",   (10,      24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "Danger Map", (W + 10,  24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+
     return canvas
 
 
