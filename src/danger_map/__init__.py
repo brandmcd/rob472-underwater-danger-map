@@ -141,13 +141,23 @@ def _resize_hw(arr: np.ndarray, H: int, W: int) -> np.ndarray:
 
 def _colorize_risk(rgb: np.ndarray, risk: np.ndarray, alpha: float) -> np.ndarray:
     """
-    Blend a JET heatmap of `risk` over `rgb`.
+    Blend a danger heatmap over `rgb` using per-pixel alpha scaled by risk.
+
+    Background pixels (risk ≈ 0) are left as the original RGB.
+    High-risk pixels blend toward red/yellow (COLORMAP_HOT).
+
+    Using a flat alpha (same weight everywhere) with COLORMAP_JET causes all
+    zero-risk pixels to turn blue, which is visually misleading.  Per-pixel
+    alpha avoids this: blend_weight(x,y) = risk(x,y) * alpha.
 
     risk: (H, W) float32 in [0, 1]
     Returns (H, W, 3) uint8.
     """
     risk_u8 = (risk * 255).astype(np.uint8)
-    heatmap_bgr = cv2.applyColorMap(risk_u8, cv2.COLORMAP_JET)
-    heatmap_rgb = heatmap_bgr[..., ::-1]                        # BGR → RGB
-    blended = (1 - alpha) * rgb.astype(np.float32) + alpha * heatmap_rgb.astype(np.float32)
+    heatmap_bgr = cv2.applyColorMap(risk_u8, cv2.COLORMAP_HOT)
+    heatmap_rgb = heatmap_bgr[..., ::-1]                             # BGR → RGB
+
+    # Per-pixel blend: background unchanged, high-risk pixels → heatmap colour
+    w = (risk * alpha)[..., np.newaxis]                              # (H, W, 1)
+    blended = (1.0 - w) * rgb.astype(np.float32) + w * heatmap_rgb.astype(np.float32)
     return blended.clip(0, 255).astype(np.uint8)
