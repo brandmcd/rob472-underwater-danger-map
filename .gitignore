@@ -8,6 +8,7 @@ datasets/
 __pycache__/
 *.pyc
 .venv/
+.venv-*/
 .env
 
 # editor

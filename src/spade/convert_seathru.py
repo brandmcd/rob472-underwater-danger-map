@@ -52,37 +52,65 @@ from ._spade_utils import load_depth, generate_sparse_csv
 def find_pairs(raw_dir: Path) -> list[tuple[Path, Path]]:
     """Return (rgb_path, depth_path) pairs by scanning raw_dir recursively.
 
-    Actual Kaggle SeaThru layout:
-      raw/D1/D1/linearPNG/S03082.png     ← RGB
-      raw/D1/D1/depth/depthT_S03082.tif  ← depth (or depth_resized/)
+    Handles two common Kaggle SeaThru layouts:
+      Nested:  raw/D1/D1/linearPNG/S03082.png  +  raw/D1/D1/depth/depthT_S03082.tif
+      Flat:    raw/D1/linearPNG/S03082.png      +  raw/D1/depth/depthT_S03082.tif
 
-    Pairing: extract the numeric ID from each filename and match RGB ↔ depth
-    within the same scene directory (e.g. D1/D1/).
+    Pairing logic: extract the numeric ID from each filename and match RGB ↔ depth
+    by numeric ID within the same ancestor directory (tried at two levels so both
+    layouts are handled without knowing which one is present on disk).
+
+    Both .tif and .tiff depth extensions are accepted.
     """
-    # Index all depth TIFs by (scene_dir, numeric_id)
+    # Collect all depth files (.tif and .tiff)
+    depth_files = sorted(raw_dir.rglob("*.tif")) + sorted(raw_dir.rglob("*.tiff"))
+
+    if not depth_files:
+        print(f"  DEBUG: no .tif/.tiff files found anywhere under {raw_dir}")
+
+    # Index depth files by (ancestor_dir, numeric_id) at two parent levels.
+    # This handles both flat (D1/depth/…) and nested (D1/D1/depth/…) layouts.
     depth_index: dict[tuple[str, str], Path] = {}
-    for tif in sorted(raw_dir.rglob("*.tif")):
+    for tif in depth_files:
         m = re.search(r"(\d+)", tif.stem)
         if not m:
             continue
-        # scene_dir = parent of the depth/ or depth_resized/ folder
-        scene = str(tif.parent.parent)
-        depth_index[(scene, m.group())] = tif
+        numeric_id = m.group()
+        # Level 1: parent of the depth/ folder  (flat layout: D1/)
+        # Level 2: grandparent                   (nested layout: D1/D1/)
+        for ancestor in (tif.parent.parent, tif.parent.parent.parent):
+            key = (str(ancestor), numeric_id)
+            if key not in depth_index:
+                depth_index[key] = tif
 
-    # Find RGB PNGs and pair with depth by scene + numeric ID
+    # Collect RGB PNGs (skip anything inside a depth/ folder)
+    rgb_files = [
+        p for p in sorted(raw_dir.rglob("*.png"))
+        if "depth" not in p.parent.name.lower()
+    ]
+
+    if not rgb_files:
+        print(f"  DEBUG: no .png RGB files found anywhere under {raw_dir}")
+
     pairs: list[tuple[Path, Path]] = []
-    for png in sorted(raw_dir.rglob("*.png")):
-        # Skip PNGs inside depth directories
-        if "depth" in png.parent.name.lower():
-            continue
+    for png in rgb_files:
         m = re.search(r"(\d+)", png.stem)
         if not m:
             continue
-        # scene_dir = parent of the linearPNG/ (or similar) folder
-        scene = str(png.parent.parent)
-        key = (scene, m.group())
-        if key in depth_index:
-            pairs.append((png, depth_index[key]))
+        numeric_id = m.group()
+        # Try matching at the same two ancestor levels as depth indexing
+        for ancestor in (png.parent.parent, png.parent.parent.parent):
+            key = (str(ancestor), numeric_id)
+            if key in depth_index:
+                pairs.append((png, depth_index[key]))
+                break
+
+    # Diagnostic output when pairing fails so it's easy to fix
+    if not pairs and depth_files and rgb_files:
+        print("  DEBUG: found depth files and RGB files but could not pair them.")
+        print(f"  Sample depth paths : {[str(p) for p in depth_files[:3]]}")
+        print(f"  Sample RGB paths   : {[str(p) for p in rgb_files[:3]]}")
+        print("  Check that numeric IDs in filenames match across RGB/depth pairs.")
 
     return pairs
 
@@ -115,7 +143,7 @@ def main() -> None:
     print(f"Found {len(pairs)} RGB/depth pairs in {raw_dir}")
     if not pairs:
         print("ERROR: no pairs found. Check --raw_dir and verify SeaThru layout.")
-        return
+        raise SystemExit(1)
 
     if args.max_images:
         pairs = pairs[: args.max_images]

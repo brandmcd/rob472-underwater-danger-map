@@ -22,7 +22,7 @@
 # Usage:
 #   sbatch cluster/spade_metrics.sbat                     # FLSea 15-image demo
 #   sbatch --export=DATASET=seathru cluster/spade_metrics.sbat
-#   sbatch --export=DATASET=kskin   cluster/spade_metrics.sbat
+#   sbatch --export=DATASET=flsea   cluster/spade_metrics.sbat
 #
 # Optional overrides:
 #   WEIGHTS_PATH=/custom/path/to/weights.pt

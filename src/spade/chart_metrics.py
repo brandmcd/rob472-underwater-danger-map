@@ -6,9 +6,8 @@ Usage:
 
     # Multiple datasets → individual charts + cross-dataset comparison
     python -m src.spade.chart_metrics \\
-        --csvs reports/spade/flsea_demo_metrics.csv \\
+        --csvs reports/spade/flsea_metrics.csv \\
                reports/spade/seathru_metrics.csv \\
-               reports/spade/kskin_metrics.csv \\
         --title "SPADE Benchmark"
 
 Charts saved to reports/spade/figures/<dataset>/ at 300 DPI.

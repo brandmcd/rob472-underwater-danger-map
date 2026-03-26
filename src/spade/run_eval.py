@@ -70,7 +70,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--dataset", required=True,
-        help="Dataset tag, e.g. flsea_demo, seathru, kskin",
+        help="Dataset tag, e.g. flsea_demo, seathru, flsea",
     )
     ap.add_argument(
         "--weights", required=True,

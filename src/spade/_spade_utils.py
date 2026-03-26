@@ -1,7 +1,4 @@
-"""Shared utilities for SPADE dataset converters.
-
-Extracted from convert_seathru.py and convert_kskin.py to avoid duplication.
-"""
+"""Shared utilities for SPADE dataset converters."""
 from __future__ import annotations
 
 import csv
@@ -24,16 +21,11 @@ CORNER_MIN_DIST: int  = 5
 DEPTH_EXTS = {".npy", ".tif", ".tiff", ".png"}
 
 
-def load_depth(depth_path: Path, squeeze: bool = False) -> np.ndarray | None:
+def load_depth(depth_path: Path) -> np.ndarray | None:
     """Load a depth map and return a float32 array with values in metres.
 
     Zero and NaN indicate invalid/missing data.
     Handles .npy, .tif/.tiff (float32), and 16-bit PNG (auto-converted from mm).
-
-    Args:
-        depth_path: Path to the depth file.
-        squeeze:    If True, squeeze extra dimensions and validate shape is 2-D
-                    (needed for stereo archives that store (H, W, 1) arrays).
     """
     ext = depth_path.suffix.lower()
     try:
@@ -54,11 +46,6 @@ def load_depth(depth_path: Path, squeeze: bool = False) -> np.ndarray | None:
         print(f"  WARNING: cannot load depth {depth_path}: {exc}")
         return None
 
-    if squeeze:
-        arr = arr.squeeze()
-        if arr.ndim != 2:
-            print(f"  WARNING: unexpected depth shape {arr.shape} for {depth_path}")
-            return None
     return arr
 
 
