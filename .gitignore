@@ -4,6 +4,11 @@ logs/
 data/
 datasets/
 
+# Depth visualisation PNGs — thousands per dataset, only ~50 sample images are committed.
+# To add/replace samples: git add -f reports/spade/<dataset>/<file>.png
+reports/spade/flsea/*.png
+reports/spade/seathru/*.png
+
 # python
 __pycache__/
 *.pyc
