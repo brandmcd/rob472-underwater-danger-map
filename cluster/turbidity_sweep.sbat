@@ -59,6 +59,8 @@ mkdir -p "$(dirname "$VENV_DIR")"
     flock -x 200
     if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
         echo "Setting up virtualenv at $VENV_DIR ..."
+        # Remove any broken existing dir (e.g. read-only Activate.ps1 from prior run)
+        rm -rf "$VENV_DIR"
         python -m venv "$VENV_DIR"
         source "$VENV_DIR/bin/activate"
         pip install --quiet --upgrade pip

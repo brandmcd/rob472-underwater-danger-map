@@ -9,9 +9,11 @@
 torch>=2.1.0
 torchvision
 numpy==1.24.*
-# TensorFlow needed by SUIM-Net (danger map pipeline loads both models)
+# TensorFlow needed by SUIM-Net (danger map pipeline loads both models).
+# typing_extensions must be pinned AFTER tensorflow to undo its downgrade.
 tensorflow==2.13.1
 keras==2.13.1
+typing_extensions>=4.10.0
 scipy>=1.10
 matplotlib
 pandas

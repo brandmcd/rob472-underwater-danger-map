@@ -84,9 +84,12 @@ source "$VENV_DIR/bin/activate"
 
 # Ensure TensorFlow is available in the SPADE venv (needed for SUIM-Net in run_video.py).
 # The .deps_ok sentinel may predate this requirement, so check explicitly.
+# After installing TF, re-pin typing_extensions — TF 2.13.1 downgrades it to
+# 4.5.0 which breaks torch>=2.1.0 (requires >=4.10.0).
 if ! python -c "import tensorflow" &>/dev/null; then
     echo "Installing tensorflow into $VENV_DIR ..."
     pip install --quiet tensorflow==2.13.1 keras==2.13.1
+    pip install --quiet "typing_extensions>=4.10.0"
 fi
 
 if [[ ! -f "$WEIGHTS_PATH" ]]; then
