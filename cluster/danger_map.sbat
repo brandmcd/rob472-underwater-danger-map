@@ -1,0 +1,119 @@
+#!/bin/bash
+#SBATCH --job-name=danger-map
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=gpu
+#SBATCH --qos=class
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=24G
+#SBATCH --time=01:00:00
+#SBATCH --output=logs/danger-map-%j.log
+#
+# Run the full danger map pipeline on underwater frame sequences.
+#
+# Loads SUIM-Net (segmentation) and SPADE (depth estimation), fuses them
+# into a per-pixel risk score, and writes per-frame overlay images and
+# a stitched video.
+#
+# Produces:
+#   reports/danger_map/<DATASET>/frames/<N>_overlay.png  — one per frame
+#   reports/danger_map/<DATASET>/danger_map.mp4          — stitched video
+#
+# Prerequisites (in order):
+#   1. bash scripts/download_spade_data.sh
+#   2. sbatch --export=DATASET=<ds> cluster/spade_convert.sbat
+#   3. Have SPADE weights at the standard path (see WEIGHTS_PATH below)
+#
+# Usage:
+#   sbatch cluster/danger_map.sbat                           # FLSea (default)
+#   sbatch --export=DATASET=seathru cluster/danger_map.sbat
+#
+# Optional overrides:
+#   MAX_FRAMES=100   — stop after N frames (useful for quick previews)
+#   FPS=10           — video frame rate
+#   OVERLAY_ALPHA=0.6
+
+set -euo pipefail
+
+DATASET="${DATASET:-flsea}"
+MAX_FRAMES="${MAX_FRAMES:-}"
+FPS="${FPS:-10}"
+OVERLAY_ALPHA="${OVERLAY_ALPHA:-0.6}"
+
+DATA_ROOT="/scratch/rob572w26_class_root/rob572w26_class/${USER}/data"
+WEIGHTS_PATH="/scratch/rob572w26_class_root/rob572w26_class/${USER}/spade_weights/underwater_depth_pipeline.pt"
+SUIMNET_WEIGHTS="vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5"
+
+FRAMES_DIR="${DATA_ROOT}/${DATASET}/spade/rgb"
+DEPTH_DIR="${DATA_ROOT}/${DATASET}/spade/depth"
+OUT_DIR="reports/danger_map/${DATASET}"
+
+echo "=== Danger map pipeline: $DATASET ==="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "GPUs     : $SLURM_GPUS_ON_NODE"
+echo "Frames   : $FRAMES_DIR"
+echo "Depth    : $DEPTH_DIR"
+echo "Output   : $OUT_DIR"
+[[ -n "$MAX_FRAMES" ]] && echo "Max frames: $MAX_FRAMES"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs "$OUT_DIR"
+
+module load python/3.10.4 cuda/11.8.0 cudnn/11.8-v8.7.0
+
+# ── Venv setup (SPADE venv — has PyTorch; TF loaded via sys.path in run_video) ─
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade"
+LOCK_FILE="${VENV_DIR}.lock"
+mkdir -p "$(dirname "$VENV_DIR")"
+
+(
+    flock -x 200
+    if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
+        echo "Setting up virtualenv at $VENV_DIR ..."
+        python -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install --quiet --upgrade pip
+        pip install --quiet -r requirements_spade.txt
+        touch "$VENV_DIR/.deps_ok"
+    fi
+) 200>"$LOCK_FILE"
+
+source "$VENV_DIR/bin/activate"
+
+if [[ ! -f "$WEIGHTS_PATH" ]]; then
+    echo "ERROR: SPADE weights not found at $WEIGHTS_PATH"
+    echo "Build locally with: python scripts/build_spade_weights.py"
+    echo "Then scp to: $WEIGHTS_PATH"
+    exit 1
+fi
+
+if [[ ! -d "$FRAMES_DIR" ]]; then
+    echo "ERROR: frames not found at $FRAMES_DIR"
+    echo "Run: sbatch --export=DATASET=${DATASET} cluster/spade_convert.sbat"
+    exit 1
+fi
+
+# Build optional CLI flags
+MAX_FRAMES_ARG=""
+[[ -n "$MAX_FRAMES" ]] && MAX_FRAMES_ARG="--max_frames $MAX_FRAMES"
+
+DEPTH_ARG=""
+[[ -d "$DEPTH_DIR" ]] && DEPTH_ARG="--depth_dir $DEPTH_DIR"
+
+# shellcheck disable=SC2086
+python -m src.danger_map.run_video \
+    --frames_dir      "$FRAMES_DIR" \
+    $DEPTH_ARG \
+    --suimnet_weights "$SUIMNET_WEIGHTS" \
+    --spade_weights   "$WEIGHTS_PATH" \
+    --out_dir         "$OUT_DIR" \
+    --fps             "$FPS" \
+    --overlay_alpha   "$OVERLAY_ALPHA" \
+    $MAX_FRAMES_ARG
+
+echo ""
+echo "=== Done. ==="
+echo "  Frames : $OUT_DIR/frames/"
+echo "  Video  : $OUT_DIR/danger_map.mp4"

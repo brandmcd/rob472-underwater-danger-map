@@ -15,6 +15,8 @@ At the same time, the SPADE algorithm provides monocular depth estimation for re
 
 The SUIM and SPADE algorithms, when used independently, are both well-suited for underwater vehicles. Our major project goal is to explore how combining underwater semantic segmentation and monocular depth estimation may improve environment understanding for underwater vehicles. Using these two models together, we will construct a depth-aware "danger map" that highlights nearby obstacles based on both type and estimated proximity to the robot.
 
+**System-level goal.** Given a single underwater RGB frame and a sparse set of depth hint points (e.g., from a sonar or SLAM system), produce a real-time per-pixel collision risk score in [0, 1] that an AUV can consume directly for obstacle avoidance decisions — prioritizing the objects that are both semantically hazardous and physically close.
+
 ---
 
 ## Technical Approach
@@ -109,31 +111,94 @@ The official pretrained SPADE checkpoint is hosted on a restricted Google Drive 
 | FLSea-VI validation | 4,483 | Depth image (metres) | ≤10 m, ≤5 m, ≤2 m |
 | SeaThru | ~1,100 | SFM reconstruction (metres) | ≤10 m, ≤5 m, ≤2 m |
 
-**Results.** Quantitative SPADE results are pending — evaluation jobs are currently running on the ARC Great Lakes GPU cluster. Metric charts (error bars and δ-accuracy by depth range) will be generated automatically once the metrics CSV is produced. Based on the DA V2 + GA configuration used, we expect performance in the range reported by the SPADE paper for that baseline (FLSea: MAE ≈ 0.277 m, RMSE ≈ 0.563 m, AbsRel ≈ 0.081 at ≤10 m) [4].
+**Results (FLSea-VI, 4,483 images).**
+
+| Eval range | MAE (m) | RMSE (m) | AbsRel | SILog | δ < 1.25 | δ < 1.25² | δ < 1.25³ |
+|-----------|---------|----------|--------|-------|-----------|-----------|-----------|
+| ≤ 10 m | 0.387 | 0.619 | 0.111 | 0.127 | 0.900 | 0.986 | 0.997 |
+| ≤ 5 m | 0.271 | 0.383 | 0.102 | 0.110 | 0.928 | 0.993 | 0.999 |
+| ≤ 2 m | 0.206 | 0.240 | 0.127 | 0.089 | 0.897 | 0.989 | 0.999 |
+
+The model achieves δ < 1.25 accuracy of 0.900 at the full ≤10 m range, meaning 90% of predicted depths are within 25% of ground truth. Performance improves substantially in the near-field (≤5 m and ≤2 m ranges), which is the operationally critical zone for AUV collision avoidance. At ≤5 m, absolute error drops to 0.271 m — well within the precision needed to distinguish safe from unsafe approach distances. The SPADE paper's DA V2 + GA baseline (the same configuration we use) reports FLSea MAE ≈ 0.277 m and AbsRel ≈ 0.081 at ≤10 m [4]; our results are comparable given the simulated sparse hints and reproduced checkpoint.
+
+SeaThru results are pending (evaluation job currently running on ARC Great Lakes).
+
+**Error and accuracy charts (FLSea-VI):**
+
+![FLSea — Error Metrics by Evaluation Range](figures/spade/errors_by_range.png)
+
+![FLSea — δ-Accuracy by Evaluation Range](figures/spade/accuracy_by_range.png)
 
 **Sample depth predictions (FLSea-VI):**
 
-Each panel shows the RGB input with sparse depth hint points (left) and the predicted dense depth map (right). The colorbar indicates depth in metres.
+Each panel shows the RGB input with sparse depth hint points overlaid (left) and the predicted dense depth map with a depth colorbar (right).
 
 | | |
 |:---:|:---:|
 | ![FLSea depth sample 1](figures/spade/flsea_001833.png) | ![FLSea depth sample 2](figures/spade/flsea_000647.png) |
-| Seafloor with structured terrain — depth gradients captured from near (~3 m) to far (~12 m) | Sandy slope with fish — near-field seafloor and far-field water column distinguished |
+| Seafloor with structured terrain — depth gradients captured from near (~3 m) to far (~12 m) | Sandy slope — near-field seafloor and far-field water column distinguished |
 | ![FLSea depth sample 3](figures/spade/flsea_003122.png) | |
 | Rocky reef — smooth depth transition across foreground rocks to background water |
 
-**Metrics reported.** Mean Absolute Error (MAE), Root Mean Squared Error (RMSE), Absolute Relative Error (AbsRel), Scale-Invariant Log Error (SILog), and δ-accuracy thresholds (δ < 1.25, 1.25², 1.25³), all computed over valid pixels within each depth range.
+**Metrics reported.** Mean Absolute Error (MAE), Root Mean Squared Error (RMSE), Absolute Relative Error (AbsRel), Scale-Invariant Log Error (SILog), and δ-accuracy thresholds (δ < 1.25, 1.25², 1.25³), all computed over valid depth pixels within each evaluation range.
+
+---
+
+### Goal 3: Underwater Danger Map
+
+**What we did.** We implemented a fused danger map that combines SUIM-Net segmentation outputs and SPADE depth estimates into a single per-pixel collision risk score. The algorithm is fully implemented in `src/danger_map/` and has been tested on the SUIM sample imagery using synthetic flat-depth maps.
+
+**Risk formula.**
+
+```
+proximity(x,y)  =  clip( (near_m / depth(x,y))^power,  0, 1 )
+
+hazard(x,y)     =  max hazard_weight over all SUIM-Net classes active at (x,y)
+                   "active" = sigmoid output > seg_threshold (default 0.5)
+
+risk(x,y)       =  hazard(x,y) × proximity(x,y)   ∈ [0, 1]
+```
+
+Proximity saturates to 1.0 for objects closer than `near_m` (default 1 m) and falls off as `1/depth` beyond that. Hazard weights encode class severity — divers (HD) are weighted 1.0 (highest), reefs and wrecks 0.8–0.9, fish 0.5, and robots 0.2. Only the maximum-weight active class at each pixel contributes, preventing double-counting when multiple classes overlap (e.g., a diver holding a robot). Pixels with invalid depth (zero or NaN) receive risk = 0 to avoid false alarms from missing sensor data.
+
+**Per-class hazard weights.**
+
+| Class | Weight | Rationale |
+|-------|--------|-----------|
+| Human Diver (HD) | 1.0 | Highest priority — diver injury is unacceptable |
+| Wreck / Ruin (WR) | 0.9 | Large rigid structure, high collision damage |
+| Reef / Invertebrate (RI) | 0.8 | Hard structural hazard, ecologically sensitive |
+| Fish / Vertebrate (FV) | 0.5 | Mobile, moderate impact risk |
+| Robot / Instrument (RO) | 0.2 | Not a natural obstacle for the AUV |
+
+**Overlay design.** The output overlay uses a grayscale background (to eliminate color-on-color clash with blue/green underwater imagery), a HOT colormap (black → red → yellow → white) blended with per-pixel alpha equal to `risk × overlay_alpha`, and per-class contour labels drawn at each segmented region's centroid. This allows an operator or downstream planner to read both the risk intensity and the causal class at a glance.
+
+**Sample danger map outputs (synthetic 2 m flat depth, real SUIM-Net inference):**
+
+The figures below use a uniform 2 m depth map so that all detected objects contribute a fixed proximity score of `clip(1/2, 0, 1) = 0.5`, isolating the effect of class hazard weights on the final risk. Full-pipeline outputs with real SPADE depth are in progress.
+
+| | |
+|:---:|:---:|
+| ![Diver + Reef](figures/danger_map/d_r_598__danger.png) | ![Wreck + Diver](figures/danger_map/w_r_147__danger.png) |
+| Diver (HD, blue) and reef (RI, orange) detected — diver region shows highest risk (brown/red) due to HD weight = 1.0 | Wreck propeller blades (WR, cyan) and diver in background (HD, blue) — both correctly labelled with appropriate risk levels |
+| ![Fish + Reef](figures/danger_map/n_l_100__danger.png) | |
+| Angelfish (FV, green) and coral reef (RI, orange) — fish shows lower risk than reef due to FV weight = 0.5 vs RI weight = 0.8 |
+
+**Robustness and domain gap.** A key limitation identified by our cross-dataset evaluation is that SUIM-Net's segmentation quality degrades significantly on out-of-domain imagery (mIoU drops from 0.779 to 0.526 on USIS10K). To quantify how environmental degradation affects the danger map, we are running a turbidity sweep that applies increasing levels of simulated backscatter and color attenuation to SUIM test images and measures per-class IoU degradation. Results will inform which classes — and therefore which hazard detections — are most sensitive to water clarity.
 
 ---
 
 ## Remaining Milestones
 
-| Sub-goal | Description | Target date |
-|----------|-------------|-------------|
-| SPADE benchmark results | Collect and analyze FLSea and SeaThru evaluation outputs once cluster jobs complete | Mar 2026 |
-| Develop danger map algorithm | Combine SUIM-Net segmentation masks and SPADE depth maps into a per-pixel risk score. Each class is assigned a base hazard weight; risk is scaled by inverse depth so nearby objects dominate | Mar 30, 2026 |
-| Test danger map | Run the fused danger map on held-out underwater sequences. Evaluate qualitatively (do high-risk regions correspond to nearby obstacles?) and quantitatively where ground truth is available | Apr 12, 2026 |
-| Final report | Write final report summarizing all results | Apr 21, 2026 |
+| Sub-goal | Status | Target date |
+|----------|--------|-------------|
+| SPADE FLSea benchmark | **Complete** — 4,483 images, results above | Mar 2026 |
+| SPADE SeaThru benchmark | In progress — ARC job running | Mar 30, 2026 |
+| Danger map algorithm | **Complete** — implemented and tested | Mar 2026 |
+| Danger map video on FLSea sequences | In progress — pipeline ready, ARC run pending | Apr 5, 2026 |
+| Turbidity robustness sweep | In progress — ARC job ready to submit | Apr 5, 2026 |
+| Latency profiling | Planned — time both models per frame on GPU node | Apr 5, 2026 |
+| Final report | In progress | Apr 12, 2026 |
 
 ---
 
@@ -151,6 +216,6 @@ Each panel shows the RGB input with sparse depth hint points (left) and the pred
 
 [6] S. Saleh et al., "DeepFish: A Realistic Fish-Habitat Dataset to Evaluate Algorithms for Underwater Visual Analysis," *Scientific Reports*, 2020. https://alzayats.github.io/DeepFish/
 
-[7] L. Zust et al., "LaRS: A Diverse Panoptic Maritime Obstacle Detection Dataset and Benchmark," ICCV 2023. https://lojzezust.github.io/lars-dataset/
+[7] S. Lian et al., "Diving into Underwater: Segment Anything Model Guided Underwater Salient Instance Segmentation and A Large-scale Dataset," arXiv:2406.06039, 2024. https://arxiv.org/abs/2406.06039
 
 [8] L. Yang et al., "Depth Anything V2," arXiv:2406.09414, 2024. https://arxiv.org/abs/2406.09414

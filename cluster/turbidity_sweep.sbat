@@ -1,0 +1,100 @@
+#!/bin/bash
+#SBATCH --job-name=turbidity-sweep
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=standard
+#SBATCH --qos=class
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=01:00:00
+#SBATCH --output=logs/turbidity-sweep-%j.log
+#
+# Run SUIM-Net segmentation at five turbidity levels (0.0 → 1.0) on the
+# SUIM test set.  No GPU needed — CPU-only inference.
+#
+# Produces:
+#   reports/turbidity/level_0.00/metrics.csv
+#   reports/turbidity/level_0.25/metrics.csv
+#   reports/turbidity/level_0.50/metrics.csv
+#   reports/turbidity/level_0.75/metrics.csv
+#   reports/turbidity/level_1.00/metrics.csv
+#   reports/turbidity/turbidity_summary.csv   ← one row per level × class
+#
+# Prerequisites:
+#   bash scripts/download_suimnet_data.sh   (downloads SUIM test images + masks)
+#
+# Usage:
+#   sbatch cluster/turbidity_sweep.sbat
+#   sbatch --export=DATASET=suim,LEVELS="0.0 0.5 1.0" cluster/turbidity_sweep.sbat
+
+set -euo pipefail
+
+DATASET="${DATASET:-suim}"
+LEVELS="${LEVELS:-0.0 0.25 0.5 0.75 1.0}"
+
+DATA_ROOT="/scratch/rob572w26_class_root/rob572w26_class/${USER}/data"
+IMAGES_DIR="${DATA_ROOT}/${DATASET}/test/images"
+MASKS_DIR="${DATA_ROOT}/${DATASET}/test/masks"
+WEIGHTS="vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5"
+
+echo "=== Turbidity robustness sweep ==="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "Dataset  : $DATASET"
+echo "Levels   : $LEVELS"
+echo "Images   : $IMAGES_DIR"
+echo "Masks    : $MASKS_DIR"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs reports/turbidity
+
+module load python/3.10.4
+
+# ── Venv setup ───────────────────────────────────────────────────────────────
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472"
+LOCK_FILE="${VENV_DIR}.lock"
+mkdir -p "$(dirname "$VENV_DIR")"
+
+(
+    flock -x 200
+    if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
+        echo "Setting up virtualenv at $VENV_DIR ..."
+        python -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install --quiet --upgrade pip
+        pip install --quiet -r requirements.txt
+        touch "$VENV_DIR/.deps_ok"
+    fi
+) 200>"$LOCK_FILE"
+
+source "$VENV_DIR/bin/activate"
+
+if [[ ! -d "$IMAGES_DIR" ]]; then
+    echo "ERROR: images not found at $IMAGES_DIR"
+    echo "Run: bash scripts/download_suimnet_data.sh"
+    exit 1
+fi
+
+if [[ ! -d "$MASKS_DIR" ]]; then
+    echo "ERROR: masks not found at $MASKS_DIR"
+    echo "Run: bash scripts/download_suimnet_data.sh"
+    exit 1
+fi
+
+if [[ ! -f "$WEIGHTS" ]]; then
+    echo "ERROR: SUIM-Net weights not found at $WEIGHTS"
+    exit 1
+fi
+
+# shellcheck disable=SC2086
+python -m src.augment.run_sweep \
+    --images_dir "$IMAGES_DIR" \
+    --masks_dir  "$MASKS_DIR" \
+    --weights    "$WEIGHTS" \
+    --out_dir    reports/turbidity \
+    --levels     $LEVELS
+
+echo ""
+echo "=== Done. ==="
+echo "  Summary : reports/turbidity/turbidity_summary.csv"
+echo "  Per-level CSVs: reports/turbidity/level_*/metrics.csv"

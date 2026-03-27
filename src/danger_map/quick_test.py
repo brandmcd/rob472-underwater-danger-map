@@ -53,6 +53,7 @@ _km.Model = _ModelShim
 
 from model import SUIM_Net  # type: ignore  (vendor/SUIM-Net/model.py)
 from src.danger_map import danger_map
+from src.danger_map.navigate import nav_command, draw_nav_overlay
 from src.danger_map.run_video import _make_side_by_side
 
 SUIM_H, SUIM_W = 240, 320
@@ -112,10 +113,14 @@ def main() -> None:
             overlay_alpha=args.overlay_alpha,
         )
 
+        nav = nav_command(risk_map, depth_flat)
+        overlay = draw_nav_overlay(overlay, nav)
+
         panel = _make_side_by_side(rgb, overlay)
         out_path = out_dir / (img_path.stem + "_danger.png")
         cv2.imwrite(str(out_path), cv2.cvtColor(panel, cv2.COLOR_RGB2BGR))
-        print(f"  {img_path.name:30s}  risk_max={risk_map.max():.3f}  → {out_path.name}")
+        print(f"  {img_path.name:30s}  risk_max={risk_map.max():.3f}  "
+              f"[{nav.risk_level}] → {nav.command}")
 
     print(f"\nDone. Overlays saved to: {out_dir.resolve()}")
 
