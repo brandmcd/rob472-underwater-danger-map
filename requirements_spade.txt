@@ -9,6 +9,9 @@
 torch>=2.1.0
 torchvision
 numpy==1.24.*
+# TensorFlow needed by SUIM-Net (danger map pipeline loads both models)
+tensorflow==2.13.1
+keras==2.13.1
 scipy>=1.10
 matplotlib
 pandas

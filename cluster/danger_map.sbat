@@ -82,6 +82,13 @@ mkdir -p "$(dirname "$VENV_DIR")"
 
 source "$VENV_DIR/bin/activate"
 
+# Ensure TensorFlow is available in the SPADE venv (needed for SUIM-Net in run_video.py).
+# The .deps_ok sentinel may predate this requirement, so check explicitly.
+if ! python -c "import tensorflow" &>/dev/null; then
+    echo "Installing tensorflow into $VENV_DIR ..."
+    pip install --quiet tensorflow==2.13.1 keras==2.13.1
+fi
+
 if [[ ! -f "$WEIGHTS_PATH" ]]; then
     echo "ERROR: SPADE weights not found at $WEIGHTS_PATH"
     echo "Build locally with: python scripts/build_spade_weights.py"
