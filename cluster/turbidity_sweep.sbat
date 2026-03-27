@@ -32,8 +32,8 @@ DATASET="${DATASET:-suim}"
 LEVELS="${LEVELS:-0.0 0.25 0.5 0.75 1.0}"
 
 DATA_ROOT="/scratch/rob572w26_class_root/rob572w26_class/${USER}/data"
-IMAGES_DIR="${DATA_ROOT}/${DATASET}/test/images"
-MASKS_DIR="${DATA_ROOT}/${DATASET}/test/masks"
+IMAGES_DIR="${DATA_ROOT}/${DATASET}/TEST/images"
+MASKS_DIR="${DATA_ROOT}/${DATASET}/TEST/masks"
 WEIGHTS="vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5"
 
 echo "=== Turbidity robustness sweep ==="
