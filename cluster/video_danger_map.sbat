@@ -1,0 +1,111 @@
+#!/bin/bash
+#SBATCH --job-name=video-danger-map
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=gpu
+#SBATCH --qos=class
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=24G
+#SBATCH --time=02:00:00
+#SBATCH --output=logs/video-danger-map-%j.log
+#
+# Run the danger map pipeline on a raw underwater video file.
+#
+# Reads frames directly from the .mp4 — no pre-extraction needed.
+# Produces a 3-panel output video:  [ Original | Danger Map | Navigation ]
+#
+# Usage:
+#   sbatch --export=VIDEO=videos/raw/bluerov1.mp4 cluster/video_danger_map.sbat
+#   sbatch --export=VIDEO=videos/raw/bluerov2.mp4 cluster/video_danger_map.sbat
+#   sbatch --export=VIDEO=videos/raw/multimedia-unexpected-1920x1080-1.mp4 cluster/video_danger_map.sbat
+#
+# Optional overrides:
+#   MAX_FRAMES=300   limit frames (useful for quick preview)
+#   FPS=10           output video fps
+#   PLY_EVERY=30     save a risk point cloud every N frames (0 = off)
+
+set -euo pipefail
+
+VIDEO="${VIDEO:-videos/raw/bluerov1.mp4}"
+MAX_FRAMES="${MAX_FRAMES:-}"
+FPS="${FPS:-10}"
+PLY_EVERY="${PLY_EVERY:-30}"
+
+WEIGHTS_PATH="/scratch/rob572w26_class_root/rob572w26_class/${USER}/spade_weights/underwater_depth_pipeline.pt"
+SUIMNET_WEIGHTS="vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5"
+
+# Derive output dir from video filename  (e.g. videos/raw/bluerov1.mp4 → videos/processed/bluerov1)
+VIDEO_STEM=$(basename "${VIDEO%.*}")
+OUT_DIR="videos/processed/${VIDEO_STEM}"
+
+echo "=== Video Danger Map Pipeline ==="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "Input    : $VIDEO"
+echo "Output   : $OUT_DIR"
+[[ -n "$MAX_FRAMES" ]] && echo "Max frames: $MAX_FRAMES"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs "$OUT_DIR"
+
+module load python/3.10.4 cuda/11.8.0 cudnn/11.8-v8.7.0
+
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade"
+LOCK_FILE="${VENV_DIR}.lock"
+mkdir -p "$(dirname "$VENV_DIR")"
+
+(
+    flock -x 200
+    if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
+        echo "Setting up virtualenv at $VENV_DIR ..."
+        python -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install --quiet --upgrade pip
+        pip install --quiet -r requirements_spade.txt
+        touch "$VENV_DIR/.deps_ok"
+    fi
+) 200>"$LOCK_FILE"
+
+source "$VENV_DIR/bin/activate"
+
+# Ensure TF + typing_extensions are pinned correctly
+if ! python -c "import tensorflow" &>/dev/null; then
+    pip install --quiet tensorflow==2.13.1 keras==2.13.1
+fi
+pip install --quiet "typing_extensions>=4.10.0"
+python -c "import skimage" &>/dev/null || pip install --quiet scikit-image
+
+if [[ ! -f "$WEIGHTS_PATH" ]]; then
+    echo "ERROR: SPADE weights not found at $WEIGHTS_PATH"
+    echo "scp ~/Downloads/underwater_depth_pipeline.pt ${USER}@greatlakes.arc-ts.umich.edu:${WEIGHTS_PATH}"
+    exit 1
+fi
+
+if [[ ! -f "$VIDEO" ]]; then
+    echo "ERROR: Video not found: $VIDEO"
+    exit 1
+fi
+
+# Build optional flags
+MAX_FRAMES_ARG=""
+[[ -n "$MAX_FRAMES" ]] && MAX_FRAMES_ARG="--max_frames $MAX_FRAMES"
+
+PLY_ARG=""
+[[ "$PLY_EVERY" -gt 0 ]] && PLY_ARG="--save_ply --ply_every $PLY_EVERY"
+
+# shellcheck disable=SC2086
+python -m src.danger_map.run_video \
+    --video_file      "$VIDEO" \
+    --suimnet_weights "$SUIMNET_WEIGHTS" \
+    --spade_weights   "$WEIGHTS_PATH" \
+    --out_dir         "$OUT_DIR" \
+    --fps             "$FPS" \
+    $PLY_ARG \
+    $MAX_FRAMES_ARG
+
+echo ""
+echo "=== Done ==="
+echo "  Frames : $OUT_DIR/frames/"
+echo "  Video  : $OUT_DIR/danger_map.mp4"
+[[ "$PLY_EVERY" -gt 0 ]] && echo "  Clouds : $OUT_DIR/clouds/"

@@ -239,12 +239,13 @@ def _run_spade(model, rgb: np.ndarray, depth_m: np.ndarray | None) -> np.ndarray
     img_rs = cv2.resize(img_f, (SPADE_W, SPADE_H), interpolation=cv2.INTER_LINEAR)
     img_norm = (img_rs - _IMAGENET_MEAN) / _IMAGENET_STD       # (H, W, 3)
     img_t = torch.from_numpy(img_norm.transpose(2, 0, 1))       # (3, H, W)
-    img_t = img_t.unsqueeze(0).float().cuda()                   # (1, 3, H, W)
+    device = next(model.parameters()).device
+    img_t = img_t.unsqueeze(0).float().to(device)               # (1, 3, H, W)
 
     # Build sparse hint map
     sparse_np = _build_sparse_map(rgb, depth_m)                 # (H, W, 1)
     sparse_t  = torch.from_numpy(sparse_np.transpose(2, 0, 1))  # (1, H, W)
-    sparse_t  = sparse_t.unsqueeze(0).float().cuda()            # (1, 1, H, W)
+    sparse_t  = sparse_t.unsqueeze(0).float().to(device)        # (1, 1, H, W)
 
     with torch.no_grad():
         out = model(img_t, prompt_depth=sparse_t, fx=None, cx=None)
@@ -275,7 +276,10 @@ def _load_spade(weights_path: Path):
             "SPADE", "eval", "flsea_sparse_feature",
             pretrained_resource=f"local::{weights_path}",
         )
-        model = build_model(config).cuda()
+        import torch
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = build_model(config)
+        model = model.to(device)
         model.eval()
         return model
     finally:

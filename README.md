@@ -3,45 +3,48 @@
 **Brandon McDonald · Caitlin Roberts · Sydney Ragla**
 University of Michigan · ROB 472 Winter 2026
 
-Combines underwater semantic segmentation (SUIM-Net) with monocular depth estimation
-(SPADE) to construct a depth-aware **danger map** for autonomous underwater vehicle
-(AUV) perception. The danger map assigns each detected object a collision-risk score
-based on its semantic class and estimated proximity to the robot.
+End-to-end pipeline that segments underwater hazards with SUIM-Net, estimates metric depth with SPADE, and fuses them into a per-pixel **danger map** with an actionable AUV navigation command.
+
+```
+RGB frame → SUIM-Net → class logits ─┐
+                                      ├→ danger_map() → risk_map → nav_command()
+           → SPADE   → depth (m)  ───┘                             ↓
+                                                         [ ASCEND LEFT | PROCEED | STOP … ]
+```
 
 ---
 
-## Project goals
+## Results
 
-| # | Goal | Module | Description |
-|---|------|--------|-------------|
-| 1 | Semantic segmentation baseline | [SUIM-Net](src/suimnet/README.md) | Segment underwater scenes into obstacle-relevant classes (fish, reef, wreck, diver, robot). Evaluate on SUIM, DeepFish, and USIS10K to measure cross-dataset generalization. |
-| 2 | Monocular depth estimation | [SPADE](src/spade/README.md) | Estimate metric-scale depth from a single RGB image + sparse depth hints. Benchmark on FLSea and SeaThru datasets. |
-| 3 | Danger map fusion | [Danger Map](src/danger_map/README.md) | Combine segmentation masks and depth maps into a per-pixel collision-risk score. Outputs a grayscale+heatmap overlay with per-class contour labels for AUV obstacle avoidance. |
+| Metric | Value |
+|--------|-------|
+| SUIM-Net mIoU (SUIM test set) | **0.78** |
+| SUIM-Net mIoU at turbidity 0.5 | **0.67** |
+| SUIM-Net mIoU at turbidity 1.0 | **0.39** (−54%) |
+| SPADE δ<1.25 (FLSea, 0–5m) | **0.928** |
+| SPADE δ<1.25 (SeaThru, 0–5m) | **0.879** |
+| Pipeline FPS — GPU est. (ARC A40) | **~13 FPS** |
 
----
+### Danger map overlay (3-panel)
 
-## Sample results
+| Wreck scene | Diver scene |
+|:-----------:|:-----------:|
+| ![Wreck](figures/danger_map/w_r_147__danger.png) | ![Diver](figures/danger_map/d_r_598__danger.png) |
+| `ASCEND RIGHT [CAUTION]` — wreck surfaces red, open water green | `ASCEND [CAUTION]` — diver (HD) and reef (RI) highlighted |
 
-### Semantic segmentation (SUIM-Net)
-
-| | |
-|:---:|:---:|
-| ![Diver + Robot](figures/suimnet/d_r_47_sidebyside.png) | ![Fish + Reef](figures/suimnet/n_l_100_sidebyside.png) |
-| Diver with robot instrument — HD (blue), RO (red), RI (magenta) | Angelfish near coral — FV (yellow), RI (magenta) |
-
-### Monocular depth estimation (SPADE)
-
-| | |
-|:---:|:---:|
-| ![Depth sample 1](figures/spade/flsea_001833.png) | ![Depth sample 2](figures/spade/flsea_000647.png) |
-| Structured seafloor — depth from ~3 m to ~12 m | Sandy slope with fish — near/far separation |
-
-### Danger map
+### Charts
 
 | | |
-|:---:|:---:|
-| ![Diver + Robot danger](reports/danger_map/quick_test/d_r_47__danger.png) | ![Wreck + Diver danger](reports/danger_map/quick_test/w_r_147__danger.png) |
-| Diver with robot — HD/RO contours, heatmap shows proximity risk | Wreck + diver — WR/HD contours, grayscale background prevents colour clash |
+|:-:|:-:|
+| ![Summary](figures/charts/system_summary.png) | ![Turbidity](figures/charts/turbidity_heatmap.png) |
+| Results summary card | IoU heatmap: class × turbidity level |
+| ![Latency](figures/charts/latency_breakdown.png) | ![SPADE](figures/charts/spade_accuracy.png) |
+| Latency breakdown: CPU vs GPU | SPADE depth accuracy: FLSea vs SeaThru |
+
+Regenerate all charts from CSVs:
+```bash
+python scripts/make_report_figures.py
+```
 
 ---
 
@@ -49,83 +52,46 @@ based on its semantic class and estimated proximity to the robot.
 
 ```
 src/
-  suimnet/            # Goal 1: segmentation inference, metrics, charts
-  spade/              # Goal 2: depth estimation, evaluation, charts
-  danger_map/         # Goal 3: danger map — risk scoring, overlay rendering, video pipeline
-    quick_test.py
-    run_video.py
-  common/config.py    # shared config: profile + dataset path resolution
-configs/
-  profiles.yaml       # data_root per environment (local, greatlakes)
-  datasets.yaml       # SUIM-Net dataset paths + threshold overrides
-  spade_datasets.yaml # SPADE dataset depth ranges + filenames lists
-cluster/
-  suimnet_convert.sbat  # SLURM: label format conversion (CPU)
-  suimnet_infer.sbat    # SLURM: segmentation inference (GPU)
-  suimnet_metrics.sbat  # SLURM: segmentation metrics + charts (CPU)
-  spade_convert.sbat    # SLURM: depth data conversion (CPU)
-  spade_metrics.sbat    # SLURM: depth evaluation + charts (GPU)
-  (no danger_map sbat — run interactively or via run_video.py)
+  danger_map/         # Core pipeline — risk scoring, overlay, video, navigation
+    __init__.py       # danger_map() — risk = hazard_weight × proximity
+    navigate.py       # nav_command(), draw_nav_overlay(), PLY writer
+    run_video.py      # Full video pipeline (--video_file or --frames_dir)
+    quick_test.py     # CPU smoke test on 8 bundled images
+    profile_latency.py
+  suimnet/            # Segmentation inference, metrics, charts
+  spade/              # Depth estimation, evaluation, charts
+  augment/            # Turbidity augmentation + robustness sweep
 scripts/
-  download_suimnet_data.sh  # download SUIM, DeepFish, USIS10K
-  download_spade_data.sh    # download SeaThru, FLSea-VI
-  build_spade_weights.py    # assemble SPADE checkpoint from DA V2 backbone
-  launch_all.sh             # submit all SLURM jobs with dependency chaining
-vendor/
-  SUIM-Net/           # upstream 5-class segmentation model (submodule)
-  SPADE/              # upstream monocular depth estimator (submodule)
-outputs/              # inference masks (gitignored)
+  make_report_figures.py   # Regenerate all charts from CSVs
+  compare_pointcloud.py    # Danger map + 3D point cloud comparison figure
+  render_ply.py            # Render .ply to perspective + top-down PNGs
+cluster/
+  video_danger_map.sbat    # SLURM: run danger map on raw MP4 videos
+  danger_map.sbat          # SLURM: run danger map on frame-folder datasets
+  turbidity_sweep.sbat     # SLURM: turbidity robustness sweep
+  suimnet_*.sbat / spade_*.sbat
+videos/
+  raw/               # Input videos (bluerov1.mp4, bluerov2.mp4, …)
+  processed/         # Output — danger_map.mp4 per video (generated on ARC)
+figures/
+  charts/            # Report-ready charts (turbidity, latency, SPADE, SUIM-Net)
+  danger_map/        # Danger map overlay samples
+  pointcloud/        # Risk point cloud renders
 reports/
-  suimnet/            # segmentation metrics CSVs + figures
-  spade/              # depth metrics CSVs, charts, depth visualisations
-  danger_map/         # danger map overlays and videos
-logs/                 # SLURM job logs (gitignored)
+  suimnet/           # Per-image segmentation metrics CSVs
+  spade/             # Depth accuracy CSVs + visualisations
+  turbidity/         # Turbidity sweep CSVs per level
+  latency_local.csv  # CPU latency baseline
+vendor/
+  SUIM-Net/          # Upstream segmentation model (git submodule)
+  SPADE/             # Upstream depth estimator (git submodule)
 ```
 
 ---
 
-## Datasets
+## Local quick-start
 
-### Semantic segmentation (Goal 1)
-
-| Key | Dataset | Images | Use |
-|-----|---------|--------|-----|
-| `suim` | [SUIM TEST split](https://drive.google.com/file/d/1uEnlqKrlt6lITc_i80NTtb7iHGcO47sU) | 110 | Quantitative baseline (IoU, Dice, Precision, Recall) |
-| `deepfish` | [DeepFish](https://alzayats.github.io/DeepFish/) | ~40k | Cross-dataset generalization (fish class only) |
-| `usis10k` | [USIS10K TEST split](https://drive.google.com/file/d/1LdjLPaieWA4m8vLV6hEeMvt5wHnLg9gV) | ~1,595 | Cross-dataset generalization (7 classes) |
-
-### Monocular depth estimation (Goal 2)
-
-| Key | Dataset | Images | Use |
-|-----|---------|--------|-----|
-| `flsea_demo` | FLSea demo (bundled) | 15 | Smoke-test, no download needed |
-| `flsea` | [FLSea-VI validation](https://huggingface.co/datasets/bhowmikabhimanyu/flsea-vi) | ~4,490 | Quantitative benchmark (MAE, RMSE, delta-accuracy) |
-| `seathru` | [SeaThru](https://www.kaggle.com/datasets/colorlabeilat/seathru-dataset) | ~1,100 | Quantitative benchmark |
-
----
-
-## Setup
-
-```bash
-git clone <repo_url>
-cd rob472-underwater-danger-map
-git submodule update --init --recursive
-```
-
-The two models use different frameworks and require **separate virtual environments**:
-
-| Model | Requirements | Framework | Great Lakes venv |
-|-------|-------------|-----------|------------------|
-| SUIM-Net | `requirements.txt` | TensorFlow 2.13 | `$SCRATCH/venvs/rob472` |
-| SPADE | `requirements_spade.txt` | PyTorch >= 2.1 | `$SCRATCH/venvs/rob472-spade` |
-
-Venvs are created automatically by the SLURM scripts on first run.
-
----
-
-## Local quick-start (no ARC needed)
-
-The danger map smoke test runs on CPU using 8 bundled images — no datasets or GPU required:
+The danger map smoke test runs on CPU with 8 bundled images — no datasets or GPU required:
 
 ```bash
 git clone <repo_url> && cd rob472-underwater-danger-map
@@ -133,68 +99,51 @@ git submodule update --init --recursive
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m src.danger_map.quick_test
-# Overlays saved to reports/danger_map/quick_test/
+# → reports/danger_map/quick_test/
 ```
 
 ---
 
-## Running on ARC Great Lakes
+## Video pipeline on ARC
 
-### 1. Connect and pull
-
-```bash
-ssh <uniqname>@greatlakes.arc-ts.umich.edu
-cd ~/rob472-underwater-danger-map
-git pull && git submodule update --init --recursive
-```
-
-### 2. Download all datasets
+Running the full pipeline on the raw videos requires a GPU.
+See **[ARC_VIDEO_PIPELINE.md](ARC_VIDEO_PIPELINE.md)** for step-by-step instructions.
 
 ```bash
-# SUIM-Net datasets (SUIM, DeepFish, USIS10K)
-bash scripts/download_suimnet_data.sh
-
-# SPADE datasets (SeaThru, FLSea-VI)
-export KAGGLE_API_TOKEN=<your-kaggle-token>
-bash scripts/download_spade_data.sh
-```
-
-### 3. Submit all jobs (one command, then go to sleep)
-
-```bash
-bash scripts/launch_all.sh
-```
-
-This submits every conversion, inference, and metrics job with SLURM
-`--dependency=afterok` so they run in the correct order automatically.
-Monitor with `squeue -u $USER`.
-
-### 4. Copy results locally
-
-```bash
-# Pull metrics CSVs and charts (not the bulk depth vis PNGs)
-scp "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/spade/flsea_metrics.csv" reports/spade/
-scp "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/spade/seathru_metrics.csv" reports/spade/
-scp -r "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/spade/figures/" reports/spade/
-scp -r "<uniqname>@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/reports/suimnet/" reports/
+# Quick reference — submit all 3 videos on ARC:
+sbatch --export=VIDEO=videos/raw/bluerov1.mp4 cluster/video_danger_map.sbat
+sbatch --export=VIDEO=videos/raw/bluerov2.mp4 cluster/video_danger_map.sbat
+sbatch --export=VIDEO=videos/raw/multimedia-unexpected-1920x1080-1.mp4 cluster/video_danger_map.sbat
 ```
 
 ---
 
-## Per-model documentation
+## Setup (two venvs — TF and PyTorch conflict)
 
-- **[SUIM-Net guide](src/suimnet/README.md)** — segmentation datasets, metrics, charts, threshold tuning, SLURM variables
-- **[SPADE guide](src/spade/README.md)** — depth datasets, data conversion, evaluation, weights, SLURM variables
-- **[Danger Map guide](src/danger_map/README.md)** — risk formula, tuning all parameters, overlay design, quick test, full pipeline
+| Model | Requirements | Framework |
+|-------|-------------|-----------|
+| SUIM-Net | `requirements.txt` | TensorFlow 2.13 |
+| SPADE + full pipeline | `requirements_spade.txt` | PyTorch ≥ 2.1 + TF |
+
+```bash
+# Full pipeline venv (includes both TF and PyTorch):
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements_spade.txt
+pip install "typing_extensions>=4.10.0"   # re-pin after TF downgrades it
+```
+
+---
+
+## Navigation system
+
+See **[NAVIGATION.md](NAVIGATION.md)** for a full explanation of the 3-panel overlay, sector risk grid, nav commands, and 3D risk point cloud.
 
 ---
 
 ## References
 
 1. Islam et al., "Semantic Segmentation of Underwater Imagery: Dataset and Benchmark," 2020. [arXiv:2004.01241](https://arxiv.org/abs/2004.01241)
-2. Zhang et al., "SPADE: Sparsity Adaptive Depth Estimator for Zero-Shot, Real-Time, Monocular Depth Estimation in Underwater Environments," 2025. [arXiv:2510.25463](https://arxiv.org/abs/2510.25463)
+2. Zhang et al., "SPADE: Sparsity Adaptive Depth Estimator," 2025. [arXiv:2510.25463](https://arxiv.org/abs/2510.25463)
 3. Ebner et al., "Metrically Scaled Monocular Depth Estimation through Sparse Priors for Underwater Robots," 2023. [arXiv:2310.16750](https://arxiv.org/abs/2310.16750)
-4. DeepFish — [alzayats.github.io/DeepFish](https://alzayats.github.io/DeepFish/)
-5. USIS10K — [Google Drive](https://drive.google.com/file/d/1LdjLPaieWA4m8vLV6hEeMvt5wHnLg9gV)
-6. FLSea-VI — Randall & Treibitz, 2023. [HuggingFace](https://huggingface.co/datasets/bhowmikabhimanyu/flsea-vi)
-7. SeaThru — Akkaynak & Treibitz, CVPR 2019. [Kaggle](https://www.kaggle.com/datasets/colorlabeilat/seathru-dataset)
+4. FLSea-VI — Randall & Treibitz, 2023. [HuggingFace](https://huggingface.co/datasets/bhowmikabhimanyu/flsea-vi)
+5. SeaThru — Akkaynak & Treibitz, CVPR 2019. [Kaggle](https://www.kaggle.com/datasets/colorlabeilat/seathru-dataset)
