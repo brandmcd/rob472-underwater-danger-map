@@ -391,6 +391,11 @@ def _write_risk_ply(
     """
     H, W = risk_map.shape[:2]
 
+    # Resize depth to match risk_map if shapes differ (depth model may output a different resolution)
+    if depth_m.shape[:2] != (H, W):
+        import cv2
+        depth_m = cv2.resize(depth_m, (W, H), interpolation=cv2.INTER_LINEAR)
+
     # Valid pixels only — must have positive, finite depth
     valid = (depth_m > MIN_DEPTH_M) & np.isfinite(depth_m)
 

@@ -25,7 +25,7 @@ scp ~/Downloads/underwater_depth_pipeline.pt \
 ### 2. Pull on ARC
 
 ```bash
-ssh bamcd@greatlakes.arc-ts.umich.edu
+ssh brandmcd@greatlakes.arc-ts.umich.edu
 cd ~/rob472-underwater-danger-map
 git pull
 git submodule update --init --recursive

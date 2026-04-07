@@ -26,8 +26,6 @@
   sbatch cluster/turbidity_sweep.sbat
   ```
 - [ ] Regenerate charts after ARC results land: `python scripts/make_report_figures.py`
-- [ ] Tune `CLEAR_THRESHOLD` / `DANGER_THRESHOLD` in `src/danger_map/navigate.py`
-      once real SPADE depth is confirmed — currently most frames read CLEAR
 
 ---
 
