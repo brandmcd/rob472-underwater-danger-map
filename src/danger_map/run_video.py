@@ -16,16 +16,22 @@ Data layout expected
                For FLSea-VI, this is the `rgb/` sub-directory produced by
                src/spade/convert_flsea.py  (float32 TIFF files).
 
+--video_file   Alternative to --frames_dir: a single video file (.mp4 / .avi / .mov).
+               Frames are decoded directly from the video using OpenCV; no pre-extraction
+               step is needed. Mutually exclusive with --frames_dir.
+
 --depth_dir    (Optional) Folder of depth images with the same filenames as frames.
                Depth files must be float32 TIFF (.tif) or 16-bit PNG (.png) in mm.
                If omitted, SPADE runs in zero-hint mode (Depth-Anything V2 backbone
                only, no sparse-depth guidance) — results are still plausible but
                may not be metric-scale.
+               Not used when --video_file is supplied (no GT depth available).
 
 Usage (on ARC Great Lakes)
 ──────────────────────────
     cd /path/to/rob472-underwater-danger-map
 
+    # Frame-folder mode (FLSea / SeaThru):
     python -m src.danger_map.run_video \\
         --frames_dir  $DATA_ROOT/flsea/spade/rgb \\
         --depth_dir   $DATA_ROOT/flsea/spade/depth \\
@@ -34,9 +40,16 @@ Usage (on ARC Great Lakes)
         --out_dir         figures/danger_map_videos \\
         --max_frames      300
 
+    # Video-file mode (DRUVA):
+    python -m src.danger_map.run_video \\
+        --video_file  $DATA_ROOT/druva/artifact_01.mp4 \\
+        --suimnet_weights vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5 \\
+        --spade_weights   /path/to/underwater_depth_pipeline.pt \\
+        --out_dir         reports/danger_map/druva/artifact_01
+
     # Produces:
-    #   figures/danger_map_videos/frames/000001_overlay.png  (per-frame overlay)
-    #   figures/danger_map_videos/danger_map.mp4             (stitched video)
+    #   <out_dir>/frames/000001_overlay.png  (per-frame overlay)
+    #   <out_dir>/danger_map.mp4             (stitched video)
 
 Notes
 ─────
@@ -81,6 +94,7 @@ _km.Model = _ModelShim
 from model import SUIM_Net  # type: ignore  (vendor/SUIM-Net/model.py)
 
 from src.danger_map import danger_map
+from src.danger_map.navigate import nav_command, draw_nav_overlay
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 # SUIM-Net native input resolution (must match the weights)
@@ -284,32 +298,47 @@ def _risk_colorbar(width: int, bar_h: int = 22) -> np.ndarray:
     return bar_rgb
 
 
-def _make_side_by_side(rgb: np.ndarray, overlay: np.ndarray) -> np.ndarray:
+def _make_side_by_side(rgb: np.ndarray, overlay: np.ndarray,
+                       nav_panel: np.ndarray | None = None) -> np.ndarray:
     """
-    Assemble a labelled side-by-side frame:
+    Assemble a labelled multi-panel frame.
+
+    2-panel (nav_panel is None):
         [title bar]
         [ Original RGB  |  Danger Map overlay ]
         [    risk colorbar (right panel only)  ]
+
+    3-panel (nav_panel provided):
+        [title bar]
+        [ Original RGB  |  Danger Map  |  Sector Risk + Nav ]
+        [          risk colorbar (spans panels 2+3)          ]
     """
     H, W = rgb.shape[:2]
-    title_h  = 30
-    bar_h    = 22
-    total_h  = title_h + H + bar_h
+    title_h = 30
+    bar_h   = 22
+    n_panels = 3 if nav_panel is not None else 2
+    total_h = title_h + H + bar_h
 
-    canvas = np.zeros((total_h, W * 2, 3), dtype=np.uint8)
+    canvas = np.zeros((total_h, W * n_panels, 3), dtype=np.uint8)
 
     # Panels
-    canvas[title_h : title_h + H, :W]  = rgb
-    canvas[title_h : title_h + H, W:]  = overlay
+    canvas[title_h : title_h + H, :W] = rgb
+    canvas[title_h : title_h + H, W:2*W] = overlay
+    if nav_panel is not None:
+        nav_rs = cv2.resize(nav_panel, (W, H)) if nav_panel.shape[:2] != (H, W) else nav_panel
+        canvas[title_h : title_h + H, 2*W:3*W] = nav_rs
 
-    # Colorbar under the right (danger map) panel
-    bar = _risk_colorbar(W, bar_h)
+    # Colorbar under danger-map panel(s)
+    bar_w = W * (n_panels - 1)
+    bar = _risk_colorbar(bar_w, bar_h)
     canvas[title_h + H :, W:] = bar
 
     # Title labels
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(canvas, "Original",   (10,      24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(canvas, "Danger Map", (W + 10,  24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+    if nav_panel is not None:
+        cv2.putText(canvas, "Navigation", (2*W + 10, 24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
 
     return canvas
 
@@ -320,8 +349,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="Run danger map pipeline on a folder of frames and produce overlay videos."
     )
-    ap.add_argument("--frames_dir", required=True,
+    src_group = ap.add_mutually_exclusive_group(required=True)
+    src_group.add_argument("--frames_dir",
                     help="Folder of RGB image frames (.png / .tif / .jpg), sorted alphabetically.")
+    src_group.add_argument("--video_file",
+                    help="Input video file (.mp4 / .avi / .mov). Frames are read directly; "
+                         "no pre-extraction needed. Use this for DRUVA videos.")
     ap.add_argument("--depth_dir", default=None,
                     help="(Optional) Folder of depth images matching the frame filenames. "
                          "If omitted, SPADE runs without sparse depth hints.")
@@ -340,21 +373,46 @@ def main() -> None:
                     help="Output video container. Use 'avi' if mp4 fails on the cluster.")
     ap.add_argument("--overlay_alpha", type=float, default=0.5,
                     help="Blend weight for the danger heatmap (0=RGB only, 1=heatmap only). Default: 0.5")
+    ap.add_argument("--save_ply", action="store_true",
+                    help="Write a coloured risk .ply point cloud for every Nth frame to <out_dir>/clouds/.")
+    ap.add_argument("--ply_every", type=int, default=10,
+                    help="Save a PLY every N frames when --save_ply is set. Default: 10")
     args = ap.parse_args()
 
-    frames_dir = Path(args.frames_dir).resolve()
     depth_dir  = Path(args.depth_dir).resolve() if args.depth_dir else None
     out_dir    = Path(args.out_dir).resolve()
     frames_out = out_dir / "frames"
     frames_out.mkdir(parents=True, exist_ok=True)
+    clouds_out = out_dir / "clouds"
+    if args.save_ply:
+        clouds_out.mkdir(parents=True, exist_ok=True)
 
-    frame_paths = _list_images(frames_dir)
-    if not frame_paths:
-        raise RuntimeError(f"No images found in: {frames_dir}")
-    if args.max_frames:
-        frame_paths = frame_paths[:args.max_frames]
+    # ── Source: video file or frame folder ────────────────────────────────────
+    video_cap: cv2.VideoCapture | None = None
+    frame_paths: list[Path] | None = None
 
-    print(f"Found {len(frame_paths)} frames in: {frames_dir}")
+    if args.video_file:
+        video_path_in = Path(args.video_file).resolve()
+        if not video_path_in.exists():
+            raise RuntimeError(f"Video file not found: {video_path_in}")
+        video_cap = cv2.VideoCapture(str(video_path_in))
+        if not video_cap.isOpened():
+            raise RuntimeError(f"OpenCV could not open video: {video_path_in}")
+        total_frames = int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if args.max_frames:
+            total_frames = min(total_frames, args.max_frames)
+        print(f"Video input : {video_path_in}  ({int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))} total frames)")
+        depth_dir = None  # no GT depth for raw video
+    else:
+        frames_dir = Path(args.frames_dir).resolve()
+        frame_paths = _list_images(frames_dir)
+        if not frame_paths:
+            raise RuntimeError(f"No images found in: {frames_dir}")
+        if args.max_frames:
+            frame_paths = frame_paths[:args.max_frames]
+        total_frames = len(frame_paths)
+        print(f"Found {total_frames} frames in: {frames_dir}")
+
     print(f"Depth hints: {'from ' + str(depth_dir) if depth_dir else 'DISABLED (zero-hint mode)'}")
     print(f"Output dir : {out_dir}")
     print()
@@ -372,17 +430,32 @@ def main() -> None:
     video_writer = None
     n_written = 0
 
-    for i, frame_path in enumerate(frame_paths, 1):
-        rgb = _load_rgb(frame_path)
-
-        # Load matching depth if available
-        depth_m: np.ndarray | None = None
-        if depth_dir is not None:
-            for ext in (".tif", ".tiff", ".png"):
-                dp = depth_dir / (frame_path.stem + ext)
-                if dp.exists():
-                    depth_m = _load_depth(dp)
+    def _frame_iter():
+        """Yield (frame_index, rgb_array, depth_or_None, label) tuples."""
+        if video_cap is not None:
+            i = 0
+            while True:
+                ret, bgr = video_cap.read()
+                if not ret:
                     break
+                i += 1
+                if args.max_frames and i > args.max_frames:
+                    break
+                rgb = bgr[..., ::-1].copy()  # BGR → RGB
+                yield i, rgb, None, f"frame {i}"
+        else:
+            for i, frame_path in enumerate(frame_paths, 1):
+                rgb = _load_rgb(frame_path)
+                depth_m: np.ndarray | None = None
+                if depth_dir is not None:
+                    for ext in (".tif", ".tiff", ".png"):
+                        dp = depth_dir / (frame_path.stem + ext)
+                        if dp.exists():
+                            depth_m = _load_depth(dp)
+                            break
+                yield i, rgb, depth_m, frame_path.name
+
+    for i, rgb, depth_m, label in _frame_iter():
 
         # Run both models
         seg_logits = _run_suimnet(suimnet, rgb)            # (240, 320, 5)
@@ -394,8 +467,15 @@ def main() -> None:
             overlay_alpha=args.overlay_alpha,
         )
 
-        # Build side-by-side frame
-        side_by_side = _make_side_by_side(rgb, overlay)
+        # Navigation command + optional PLY
+        ply_path = None
+        if args.save_ply and (i % args.ply_every == 0 or i == 1):
+            ply_path = clouds_out / f"{i:06d}_cloud.ply"
+        nav_result = nav_command(risk_map, depth_pred, ply_path=ply_path)
+
+        # Build 3-panel frame (Original | Danger Map | Navigation)
+        nav_panel    = draw_nav_overlay(overlay, nav_result)
+        side_by_side = _make_side_by_side(rgb, overlay, nav_panel)
 
         # Save individual frame
         out_path = frames_out / f"{i:06d}_overlay.png"
@@ -411,12 +491,14 @@ def main() -> None:
         video_writer.write(cv2.cvtColor(side_by_side, cv2.COLOR_RGB2BGR))
         n_written += 1
 
-        if i % 10 == 0 or i == len(frame_paths):
-            print(f"  [{i}/{len(frame_paths)}]  risk_max={risk_map.max():.3f}  {frame_path.name}")
+        if i % 10 == 0:
+            print(f"  [{i}/{total_frames}]  risk_max={risk_map.max():.3f}  {label}")
 
     if video_writer is not None:
         video_writer.release()
         print(f"\nVideo saved → {video_path}")
+    if video_cap is not None:
+        video_cap.release()
 
     print(f"Overlay frames saved → {frames_out}  ({n_written} frames)")
 

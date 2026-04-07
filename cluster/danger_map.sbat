@@ -94,6 +94,9 @@ fi
 # which breaks torch>=2.1.0 (requires >=4.10.0).
 pip install --quiet "typing_extensions>=4.10.0"
 
+# Ensure scikit-image is available (used by run_video.py for image resizing)
+python -c "import skimage" &>/dev/null || pip install --quiet scikit-image
+
 if [[ ! -f "$WEIGHTS_PATH" ]]; then
     echo "ERROR: SPADE weights not found at $WEIGHTS_PATH"
     echo "Build locally with: python scripts/build_spade_weights.py"

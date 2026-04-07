@@ -1,0 +1,138 @@
+#!/bin/bash
+#SBATCH --job-name=druva-danger
+#SBATCH --account=rob572w26_class
+#SBATCH --partition=gpu
+#SBATCH --qos=class
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=24G
+#SBATCH --time=04:00:00
+#SBATCH --output=logs/druva-danger-%j.log
+#
+# Run the danger map pipeline on all 20 DRUVA videos.
+#
+# Each video is processed sequentially in a single job.  SUIM-Net and SPADE
+# weights are loaded once and reused for every video.  Because `run_video.py`
+# loads models at startup this approach avoids the 20× model-load overhead
+# that separate array jobs would incur.
+#
+# Output layout:
+#   reports/danger_map/druva/<video_stem>/frames/<N>_overlay.png
+#   reports/danger_map/druva/<video_stem>/danger_map.mp4
+#
+# Prerequisites:
+#   1. Download DRUVA videos to $DRUVA_DIR (see README for request form).
+#   2. Have SPADE weights at $WEIGHTS_PATH (scp from local build).
+#
+# Usage:
+#   sbatch cluster/druva_danger_map.sbat
+#
+# Optional overrides (via --export):
+#   DRUVA_DIR=/path/to/druva/videos
+#   MAX_FRAMES=300   — stop after N frames per video (quick preview)
+#   FPS=10
+#   OVERLAY_ALPHA=0.6
+
+set -euo pipefail
+
+DRUVA_DIR="${DRUVA_DIR:-/scratch/rob572w26_class_root/rob572w26_class/${USER}/data/druva/videos}"
+MAX_FRAMES="${MAX_FRAMES:-}"
+FPS="${FPS:-10}"
+OVERLAY_ALPHA="${OVERLAY_ALPHA:-0.6}"
+
+WEIGHTS_PATH="/scratch/rob572w26_class_root/rob572w26_class/${USER}/spade_weights/underwater_depth_pipeline.pt"
+SUIMNET_WEIGHTS="vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5"
+OUT_BASE="reports/danger_map/druva"
+
+echo "=== DRUVA danger map pipeline ==="
+echo "Job ID   : $SLURM_JOB_ID"
+echo "Node     : $(hostname)"
+echo "GPUs     : $SLURM_GPUS_ON_NODE"
+echo "DRUVA dir: $DRUVA_DIR"
+echo "Output   : $OUT_BASE/<video_stem>/"
+[[ -n "$MAX_FRAMES" ]] && echo "Max frames per video: $MAX_FRAMES"
+echo ""
+
+cd "$SLURM_SUBMIT_DIR"
+mkdir -p logs "$OUT_BASE"
+
+if [[ ! -f "$WEIGHTS_PATH" ]]; then
+    echo "ERROR: SPADE weights not found at $WEIGHTS_PATH"
+    exit 1
+fi
+
+if [[ ! -d "$DRUVA_DIR" ]]; then
+    echo "ERROR: DRUVA video directory not found: $DRUVA_DIR"
+    echo "Download the dataset and place .mp4 files there."
+    exit 1
+fi
+
+# Collect all video files (any extension OpenCV can decode)
+mapfile -t VIDEOS < <(find "$DRUVA_DIR" -maxdepth 1 -type f \( -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" \) | sort)
+N_VIDEOS=${#VIDEOS[@]}
+
+if [[ $N_VIDEOS -eq 0 ]]; then
+    echo "ERROR: No video files found in $DRUVA_DIR"
+    exit 1
+fi
+
+echo "Found $N_VIDEOS video(s):"
+printf '  %s\n' "${VIDEOS[@]}"
+echo ""
+
+module load python/3.10.4 cuda/11.8.0 cudnn/11.8-v8.7.0
+
+VENV_DIR="/scratch/rob572w26_class_root/rob572w26_class/${USER}/venvs/rob472-spade"
+LOCK_FILE="${VENV_DIR}.lock"
+mkdir -p "$(dirname "$VENV_DIR")"
+
+(
+    flock -x 200
+    if [[ ! -f "$VENV_DIR/.deps_ok" ]]; then
+        echo "Setting up virtualenv at $VENV_DIR ..."
+        python -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install --quiet --upgrade pip
+        pip install --quiet -r requirements_spade.txt
+        touch "$VENV_DIR/.deps_ok"
+    fi
+) 200>"$LOCK_FILE"
+
+source "$VENV_DIR/bin/activate"
+
+if ! python -c "import tensorflow" &>/dev/null; then
+    echo "Installing tensorflow into $VENV_DIR ..."
+    pip install --quiet tensorflow==2.13.1 keras==2.13.1
+fi
+pip install --quiet "typing_extensions>=4.10.0"
+python -c "import skimage" &>/dev/null || pip install --quiet scikit-image
+
+# ── Process each video ────────────────────────────────────────────────────────
+MAX_FRAMES_ARG=""
+[[ -n "$MAX_FRAMES" ]] && MAX_FRAMES_ARG="--max_frames $MAX_FRAMES"
+
+for VIDEO in "${VIDEOS[@]}"; do
+    STEM=$(basename "$VIDEO")
+    STEM="${STEM%.*}"
+    OUT_DIR="${OUT_BASE}/${STEM}"
+    echo "──────────────────────────────────────────"
+    echo "Processing: $STEM"
+    echo "  Input : $VIDEO"
+    echo "  Output: $OUT_DIR"
+    echo ""
+
+    # shellcheck disable=SC2086
+    python -m src.danger_map.run_video \
+        --video_file      "$VIDEO" \
+        --suimnet_weights "$SUIMNET_WEIGHTS" \
+        --spade_weights   "$WEIGHTS_PATH" \
+        --out_dir         "$OUT_DIR" \
+        --fps             "$FPS" \
+        --overlay_alpha   "$OVERLAY_ALPHA" \
+        $MAX_FRAMES_ARG
+
+    echo ""
+done
+
+echo "=== Done. ==="
+echo "All outputs under: $OUT_BASE/"

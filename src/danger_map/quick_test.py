@@ -114,9 +114,9 @@ def main() -> None:
         )
 
         nav = nav_command(risk_map, depth_flat)
-        overlay = draw_nav_overlay(overlay, nav)
+        nav_panel = draw_nav_overlay(overlay, nav)
 
-        panel = _make_side_by_side(rgb, overlay)
+        panel = _make_side_by_side(rgb, overlay, nav_panel)
         out_path = out_dir / (img_path.stem + "_danger.png")
         cv2.imwrite(str(out_path), cv2.cvtColor(panel, cv2.COLOR_RGB2BGR))
         print(f"  {img_path.name:30s}  risk_max={risk_map.max():.3f}  "

@@ -69,10 +69,17 @@ from model import SUIM_Net  # type: ignore  (vendor/SUIM-Net/model.py)
 import skimage.transform as sktf
 
 from src.danger_map import danger_map
-from src.spade._spade_utils import load_depth, generate_sparse_csv
 
 SUIM_H, SUIM_W = 240, 320
-SPADE_H, SPADE_W = 352, 480      # SPADE native input resolution
+SPADE_H, SPADE_W = 336, 448      # SPADE native input resolution (matches run_video.py)
+
+# ImageNet normalisation constants used by SPADE's data pipeline
+_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+MAX_CORNERS = 500
+CORNER_QUAL = 0.01
+CORNER_DIST = 5
 
 
 def _load_frames(frames_dir: Path, depth_dir: Path | None, n: int):
@@ -98,7 +105,12 @@ def _load_frames(frames_dir: Path, depth_dir: Path | None, n: int):
                         dp = alt
                         break
             if dp.exists():
-                depth = load_depth(dp)
+                if dp.suffix.lower() in (".tif", ".tiff"):
+                    depth = tifffile.imread(str(dp)).astype(np.float32)
+                elif dp.suffix.lower() == ".npy":
+                    depth = np.load(str(dp)).astype(np.float32)
+                else:
+                    depth = np.array(Image.open(dp)).astype(np.float32) / 1000.0
 
         frames.append((p.name, arr, depth))
     return frames
@@ -111,20 +123,27 @@ def _load_suimnet(weights: Path):
 
 
 def _load_spade(weights: Path):
-    _orig_cwd = os.getcwd()
-    os.chdir(str(VENDOR_SPADE))
-    sys.path.insert(0, str(VENDOR_SPADE))
+    """Load SPADE using the same pattern as run_video.py."""
+    import torch
+    orig_cwd = os.getcwd()
     try:
-        import torch
-        from UnderwaterDepth.models.spade_model import SpadeModel  # type: ignore
+        sys.path.insert(0, str(VENDOR_SPADE))
+        os.chdir(str(VENDOR_SPADE))
+
+        from UnderwaterDepth.utils.config  import get_config   # type: ignore
+        from UnderwaterDepth.models.builder import build_model  # type: ignore
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        checkpoint = torch.load(str(weights), map_location=device)
-        model = SpadeModel(device=device)
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        config = get_config(
+            "SPADE", "eval", "flsea_sparse_feature",
+            pretrained_resource=f"local::{weights}",
+        )
+        model = build_model(config)
+        if torch.cuda.is_available():
+            model = model.cuda()
         model.eval()
     finally:
-        os.chdir(_orig_cwd)
+        os.chdir(orig_cwd)
     return model, device
 
 
@@ -136,35 +155,51 @@ def _infer_suimnet(model, rgb: np.ndarray) -> np.ndarray:
     return model.predict(x, verbose=0)[0]
 
 
+def _build_sparse_map(rgb: np.ndarray, depth_m: np.ndarray | None) -> np.ndarray:
+    """Build (SPADE_H, SPADE_W, 1) sparse depth hint map from GT depth + image corners."""
+    sparse = np.zeros((SPADE_H, SPADE_W, 1), dtype=np.float32)
+    if depth_m is None:
+        return sparse
+
+    H, W = rgb.shape[:2]
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    corners = cv2.goodFeaturesToTrack(
+        gray, maxCorners=MAX_CORNERS, qualityLevel=CORNER_QUAL, minDistance=CORNER_DIST,
+    )
+    if corners is None:
+        return sparse
+
+    if depth_m.shape[:2] != (H, W):
+        depth_m = cv2.resize(depth_m, (W, H), interpolation=cv2.INTER_NEAREST)
+
+    for c in corners:
+        x, y = c[0]
+        row = int(np.clip(round(y), 0, H - 1))
+        col = int(np.clip(round(x), 0, W - 1))
+        d = float(depth_m[row, col])
+        if d <= 0 or not np.isfinite(d):
+            continue
+        r_s = int(np.clip(row * SPADE_H / H, 0, SPADE_H - 1))
+        c_s = int(np.clip(col * SPADE_W / W, 0, SPADE_W - 1))
+        sparse[r_s, c_s, 0] = d
+    return sparse
+
+
 def _infer_spade(model, device, rgb: np.ndarray, depth: np.ndarray | None) -> np.ndarray:
-    """Return (H_spade, W_spade) float32 depth map in metres."""
+    """Return (SPADE_H, SPADE_W) float32 depth map in metres (mirrors run_video.py)."""
     import torch
 
-    rgb_rs = cv2.resize(rgb, (SPADE_W, SPADE_H))
-    t = torch.from_numpy(rgb_rs.transpose(2, 0, 1)).float().unsqueeze(0) / 255.0
-    t = t.to(device)
+    img_f  = rgb.astype(np.float32) / 255.0
+    img_rs = cv2.resize(img_f, (SPADE_W, SPADE_H), interpolation=cv2.INTER_LINEAR)
+    img_n  = (img_rs - _IMAGENET_MEAN) / _IMAGENET_STD
+    img_t  = torch.from_numpy(img_n.transpose(2, 0, 1)).float().unsqueeze(0).to(device)
 
-    if depth is not None:
-        import tempfile, csv as _csv
-        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        generate_sparse_csv(bgr, depth, tmp_path)
-        sparse_pts = []
-        with tmp_path.open() as f:
-            for row in _csv.DictReader(f):
-                sparse_pts.append([float(row["row"]), float(row["column"]), float(row["depth"])])
-        tmp_path.unlink(missing_ok=True)
-        if sparse_pts:
-            sp = torch.tensor(sparse_pts, dtype=torch.float32).unsqueeze(0).to(device)
-        else:
-            sp = torch.zeros((1, 1, 3), dtype=torch.float32).to(device)
-    else:
-        sp = torch.zeros((1, 1, 3), dtype=torch.float32).to(device)
+    sparse_np = _build_sparse_map(rgb, depth)
+    sparse_t  = torch.from_numpy(sparse_np.transpose(2, 0, 1)).float().unsqueeze(0).to(device)
 
     with torch.no_grad():
-        out = model(t, sp)
-    return out.squeeze().cpu().numpy()
+        out = model(img_t, prompt_depth=sparse_t, fx=None, cx=None)
+    return out["metric_depth"].squeeze().cpu().numpy()
 
 
 def main() -> None:
