@@ -49,185 +49,158 @@ where *hazard* encodes how dangerous a collision with the identified class would
 
 ## 2. Full Pipeline Flowchart
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         INPUT SOURCES                                    │
-│                                                                          │
-│   Raw video (.mp4)          Frame folder            Depth folder         │
-│   bluerov1/2/multimedia     (PNG / TIF / JPG)       (optional GT depth)  │
-└───────────┬──────────────────────┬──────────────────────┬───────────────┘
-            │                      │                      │
-            ▼                      ▼                      ▼
-┌───────────────────────┐  ┌───────────────┐  ┌──────────────────────────┐
-│  cv2.VideoCapture     │  │  _list_images │  │  _load_depth             │
-│  (frame-by-frame BGR) │  │  sorted paths │  │  (.tif float32 / 16-bit  │
-│  → RGB uint8          │  │  → RGB uint8  │  │   PNG mm→m)              │
-└──────────┬────────────┘  └───────┬───────┘  └────────────┬─────────────┘
-           └──────────────┬────────┘                       │
-                          ▼                                 │
-          ┌───────────────────────────┐                    │
-          │        RGB frame          │ (H × W × 3 uint8)  │
-          └─────────┬─────────┬───────┘                    │
-                    │         │                             │
-          ┌─────────▼──┐  ┌───▼──────────────────────────┐ │
-          │ SUIM-Net   │  │           SPADE               │◄┘
-          │            │  │                               │
-          │ resize →   │  │  resize RGB → (336×448)       │
-          │ (240×320)  │  │  build sparse hint map        │
-          │ keras      │  │  (Shi-Tomasi corners +        │
-          │ predict()  │  │   GT depth or all-zero)       │
-          │            │  │  torch model.forward()        │
-          └────┬───────┘  └────────────┬──────────────────┘
-               │                       │
-               ▼                       ▼
-     (240,320,5) float32       (336,448) float32
-     sigmoid logits            depth map (metres)
-     [RO, FV, HD, RI, WR]
-               │                       │
-               └──────────┬────────────┘
-                          ▼
-            ┌─────────────────────────────┐
-            │        danger_map()         │
-            │                             │
-            │  1. resize both to (H,W)    │
-            │  2. hazard = max weight     │
-            │     over active classes     │
-            │  3. proximity = clip(       │
-            │     (near_m/depth)^power)   │
-            │  4. risk = hazard × prox    │
-            │  5. colorize overlay        │
-            │     (grayscale bg + HOT     │
-            │      heatmap + contours)    │
-            └────────────┬────────────────┘
-                         │
-              ┌──────────┴──────────┐
-              ▼                     ▼
-    (H,W) float32 risk_map    (H,W,3) uint8 overlay
-              │
-              ▼
-     ┌─────────────────┐
-     │  nav_command()  │
-     │                 │
-     │  divide into    │
-     │  3×3 sectors    │
-     │  mean risk/sec  │
-     │  → safest sec   │
-     │  → command str  │
-     └────────┬────────┘
-              │
-              ▼
-     ┌──────────────────────────┐
-     │    draw_nav_overlay()    │
-     │    sector grid + banner  │
-     └────────┬─────────────────┘
-              │
-              ▼
-     ┌────────────────────────────────────────────────────┐
-     │             _make_side_by_side()                   │
-     │                                                    │
-     │  [ Original ]  [ Depth* ]  [ Danger Map ] [ Nav ] │
-     │  *optional — rendered if --show_depth is set       │
-     │                                                    │
-     │  title bar 30 px │ image H px │ colorbar 22 px     │
-     └────────────────────────────────────────────────────┘
-              │
-              ▼
-     cv2.VideoWriter → danger_map.mp4
-     (+ optional PLY point clouds every N frames)
+```mermaid
+flowchart TD
+    subgraph INPUT["Input Sources"]
+        VID["🎬 Raw video<br/>.mp4 / .avi<br/>(bluerov1/2, multimedia)"]
+        FRAMES["🖼 Frame folder<br/>PNG / TIF / JPG"]
+        DEPTH["📏 Depth folder<br/>float32 TIFF or 16-bit PNG<br/>(optional GT depth)"]
+    end
+
+    subgraph LOAD["Frame Loading  ·  run_video.py"]
+        VC["cv2.VideoCapture<br/>BGR → RGB uint8"]
+        LI["_list_images()<br/>sorted file paths → RGB"]
+        LD["_load_depth()<br/>.tif float32 / 16-bit PNG mm→m"]
+    end
+
+    VID --> VC
+    FRAMES --> LI
+    DEPTH --> LD
+
+    VC --> RGB
+    LI --> RGB
+    LD --> SPARSE
+
+    RGB(["RGB frame<br/>H × W × 3  uint8"])
+
+    subgraph PARALLEL["Parallel Model Inference"]
+        direction LR
+
+        subgraph SUIM["SUIM-Net  ·  vendor/SUIM-Net"]
+            S1["resize → 240×320"]
+            S2["Keras encoder-decoder<br/>5 sigmoid heads"]
+            S3["(240,320,5) float32<br/>logits  RO FV HD RI WR"]
+            S1 --> S2 --> S3
+        end
+
+        subgraph SPADE["SPADE  ·  vendor/SPADE"]
+            P1["resize → 336×448<br/>ImageNet normalise"]
+            SPARSE["_build_sparse_map()<br/>Shi-Tomasi corners +<br/>GT depth or all-zeros"]
+            P2["DA V2 ViT-S backbone<br/>→ relative depth"]
+            P3["Sparse fusion module<br/>→ metric scale"]
+            P4["Bilateral decoder<br/>→ edge sharpening"]
+            P5["(336,448) float32<br/>depth  metres"]
+            P1 --> P2
+            SPARSE --> P3
+            P2 --> P3 --> P4 --> P5
+        end
+    end
+
+    RGB --> S1
+    RGB --> P1
+
+    subgraph FUSE["Danger Map Fusion  ·  src/danger_map/__init__.py"]
+        F1["resize seg + depth → H×W"]
+        F2["hazard = max weight<br/>over active classes"]
+        F3["proximity = clip((near_m/depth)^p, 0,1)"]
+        F4["risk = hazard × proximity"]
+        F5["_colorize_risk()<br/>grayscale bg + HOT heatmap<br/>+ contour labels"]
+        F6["display_gamma compression<br/>vis_risk = risk^gamma"]
+        F1 --> F2 & F3
+        F2 & F3 --> F4
+        F4 --> F6 --> F5
+    end
+
+    S3 --> F1
+    P5 --> F1
+
+    F4 --> RMAP(["risk_map<br/>H×W  float32  ∈ [0,1]"])
+    F5 --> OVL(["overlay<br/>H×W×3  uint8"])
+
+    subgraph NAV["Navigation  ·  src/danger_map/navigate.py"]
+        N1["Divide into 3×3 sectors<br/>mean risk per sector"]
+        N2["Find safest sector"]
+        N3["nav command string<br/>PROCEED / ASCEND LEFT / STOP …"]
+        N4["draw_nav_overlay()<br/>sector grid + risk banner"]
+        N1 --> N2 --> N3
+        N3 --> N4
+    end
+
+    RMAP --> N1
+    OVL --> N4
+
+    subgraph VIZ["Visualisation Assembly  ·  run_video.py"]
+        V1["_render_depth_panel()<br/>PLASMA colourmap 0m→12m"]
+        V2["_make_side_by_side()<br/>Original | Depth* | Danger Map | Nav<br/>title bar 30px · colorbars 22px"]
+        V3["cv2.VideoWriter<br/>→ danger_map.mp4"]
+        V4["_write_risk_ply()<br/>green→red point cloud<br/>(every N frames)"]
+        V1 --> V2
+        V2 --> V3
+    end
+
+    P5 --> V1
+    OVL --> V2
+    N4 --> V2
+    RMAP --> V4
+
+    style INPUT fill:#1a3a5c,color:#fff,stroke:#2d6a9f
+    style LOAD fill:#1a3a5c,color:#fff,stroke:#2d6a9f
+    style PARALLEL fill:#0d3320,color:#fff,stroke:#1a6640
+    style SUIM fill:#0d3320,color:#fff,stroke:#1a6640
+    style SPADE fill:#0d3320,color:#fff,stroke:#1a6640
+    style FUSE fill:#3a1a00,color:#fff,stroke:#8b4000
+    style NAV fill:#2a0d3a,color:#fff,stroke:#6a1a8a
+    style VIZ fill:#1a1a3a,color:#fff,stroke:#4040aa
 ```
 
 ---
 
 ## 3. Depth Map System Flowchart
 
-```
-                         RGB FRAME  (H × W × 3 uint8)
-                               │
-                ┌──────────────┼──────────────────────────────────┐
-                │              │                                   │
-                │     OPTIONAL: GT depth available?                │
-                │              │                                   │
-                │       ┌──────┴──────┐                           │
-                │       │ YES         │ NO                         │
-                │       │             │                            │
-                │       ▼             ▼                            │
-                │  _load_depth()   depth_m = None                  │
-                │  .tif / 16-bit               │                   │
-                │  PNG (mm→m)                  │                   │
-                │       │              ┌───────┘                   │
-                │       ▼              ▼                           │
-                │  _build_sparse_map(rgb, depth_m)                 │
-                │                                                  │
-                │  1. Shi-Tomasi corner detection                  │
-                │     cv2.goodFeaturesToTrack(gray,                │
-                │       maxCorners=500, quality=0.01,              │
-                │       minDist=5)                                 │
-                │     → up to 500 corner points                    │
-                │                                                  │
-                │  2. For each corner (u, v):                      │
-                │     d = depth_m[row, col]   (if valid)           │
-                │     scale → SPADE sparse space (240×320)         │
-                │     place d at (row_s, col_s, 0) of sparse map   │
-                │                                                  │
-                │  3. Returns (336, 448, 1) float32                │
-                │     sparse map (zeros if no GT depth)            │
-                │                           │                      │
-                └───────────────────────────┘                      │
-                                            │                      │
-                                            ▼                      │
-                            ┌──────────────────────────────┐       │
-                            │         SPADE MODEL          │       │
-                            │   vendor/SPADE/              │       │
-                            │   UnderwaterDepth/           │◄──────┘
-                            │                              │
-                            │  Config: flsea_sparse_feature│
-                            │  Weights: underwater_depth_  │
-                            │           pipeline.pt        │
-                            │                              │
-                            │  ┌─────────────────────────┐ │
-                            │  │ Depth-Anything V2 (ViT-S)│ │
-                            │  │  monocular backbone      │ │
-                            │  │  pretrained on mixed     │ │
-                            │  │  in-air + underwater     │ │
-                            │  │  data → relative depth   │ │
-                            │  └──────────┬──────────────┘ │
-                            │             │                 │
-                            │  ┌──────────▼──────────────┐ │
-                            │  │  Sparse depth fusion     │ │
-                            │  │  module                  │ │
-                            │  │  conditions on hint map  │ │
-                            │  │  → aligns to metric scale│ │
-                            │  └──────────┬──────────────┘ │
-                            │             │                 │
-                            │  ┌──────────▼──────────────┐ │
-                            │  │  Anisotropic bilateral   │ │
-                            │  │  decoder                 │ │
-                            │  │  sharpens depth edges    │ │
-                            │  │  along intensity contours│ │
-                            │  └──────────┬──────────────┘ │
-                            └─────────────┼────────────────┘
-                                          │
-                                          ▼
-                           (336, 448) float32 depth_pred
-                              min_pred=0.1 m, max_pred=12 m
-                                          │
-                               ┌──────────┴───────────┐
-                               │                      │
-                    ┌──────────▼───────┐   ┌──────────▼──────────────┐
-                    │  danger_map()    │   │  _render_depth_panel()  │
-                    │                  │   │                         │
-                    │  resize to (H,W) │   │  resize to (H,W)        │
-                    │  via INTER_NEAR  │   │  clip(depth/12, 0, 1)   │
-                    │                  │   │  × 255 → COLORMAP_PLASMA│
-                    │  proximity(x,y)  │   │                         │
-                    │  = clip(         │   │  PLASMA scale:          │
-                    │    (near_m/d)^p, │   │  dark purple = 0m close │
-                    │    0, 1)         │   │  bright yellow = 12m far│
-                    │                  │   └─────────────────────────┘
-                    │  invalid pixels  │
-                    │  (d≤0, NaN)      │
-                    │  → proximity=0   │
-                    └──────────────────┘
+```mermaid
+flowchart TD
+    RGB_IN(["RGB Frame  H×W×3  uint8"])
+
+    subgraph HINT["Sparse Depth Hint Preparation  ·  _build_sparse_map()"]
+        direction LR
+        GT{"GT depth\navailable?"}
+        LOAD_D["_load_depth()\n.tif float32 or\n16-bit PNG mm→m"]
+        ZEROS["all-zeros sparse map\n(336×448×1)\nzero-hint mode"]
+        CORNERS["cv2.goodFeaturesToTrack()\nmaxCorners=500\nquality=0.01  minDist=5\n→ up to 500 corner points"]
+        SAMPLE["sample depth at each corner\nd = depth_m[row, col]\nscale → 240×320 sparse space\nplace d at (row_s, col_s)"]
+        SPARSE_MAP(["(336,448,1) float32\nsparse hint map"])
+
+        GT -- "Yes" --> LOAD_D --> CORNERS --> SAMPLE --> SPARSE_MAP
+        GT -- "No" --> ZEROS --> SPARSE_MAP
+    end
+
+    RGB_IN --> GT
+
+    subgraph SPADE_MODEL["SPADE Model  ·  vendor/SPADE/UnderwaterDepth/\nweights: underwater_depth_pipeline.pt\nconfig: flsea_sparse_feature"]
+        DA["Depth-Anything V2 ViT-S backbone\nImageNet-normalised 336×448 input\n→ relative depth features"]
+        FUSION["Sparse-depth fusion module\ncondition on hint map\n→ metric-scale alignment"]
+        BILATERAL["Anisotropic bilateral decoder\nedge-aware depth sharpening\nalong intensity contours"]
+        DEPTH_OUT(["(336,448) float32\nmetric depth  metres\nrange: 0.1 – 12 m"])
+        DA --> FUSION --> BILATERAL --> DEPTH_OUT
+    end
+
+    RGB_IN --> DA
+    SPARSE_MAP --> FUSION
+
+    subgraph USE["Depth Consumers"]
+        direction LR
+        PROX["danger_map()\nresize → H×W via INTER_NEAREST\nproximity = clip((near_m/d)^p, 0,1)\ninvalid pixels d≤0/NaN → proximity=0"]
+        VIS["_render_depth_panel()\nresize → H×W\nclip(depth/12, 0,1)×255\n→ COLORMAP_PLASMA\ndark purple=0m · yellow=12m"]
+        PLY["_write_risk_ply()\nunproject pixels to 3-D\nX=(u-cx)·d/fx  Y=(v-cy)·d/fy\ngreen→red by risk score"]
+    end
+
+    DEPTH_OUT --> PROX
+    DEPTH_OUT --> VIS
+    DEPTH_OUT --> PLY
+
+    style HINT fill:#0d2b3a,color:#cde,stroke:#1a6080
+    style SPADE_MODEL fill:#0d3320,color:#cec,stroke:#1a6040
+    style USE fill:#3a2000,color:#fdc,stroke:#9a5000
 ```
 
 ### Zero-Hint Mode vs Hint-Guided Mode
@@ -247,22 +220,37 @@ In zero-hint mode the model falls back to Depth-Anything V2's global-alignment m
 
 SUIM-Net is a fully-convolutional encoder-decoder network (Islam et al., 2020). The model accepts an RGB image resized to **240×320** pixels and predicts per-pixel class probabilities via independent sigmoid activations (not softmax — multiple classes can co-occur at the same pixel).
 
-```
-Input RGB (240, 320, 3)
-       │
-  VGG-style encoder (5 conv blocks, progressively downsample)
-       │
-  Bottleneck + skip connections
-       │
-  Decoder (transposed convolutions, upsample back to 240×320)
-       │
-  5 sigmoid heads (one per class):
-       ├── RO  — Robot / Instrument     [0.0, 1.0]
-       ├── FV  — Fish / Vertebrate      [0.0, 1.0]
-       ├── HD  — Human Diver            [0.0, 1.0]
-       ├── RI  — Reef / Invertebrate    [0.0, 1.0]
-       └── WR  — Wreck / Ruin           [0.0, 1.0]
-Output: (240, 320, 5) float32 sigmoid logits
+```mermaid
+flowchart LR
+    IN["Input RGB\n240×320×3"]
+    subgraph ENC["VGG-style Encoder"]
+        E1["Conv block 1\n↓ 120×160"]
+        E2["Conv block 2\n↓ 60×80"]
+        E3["Conv block 3\n↓ 30×40"]
+        E4["Conv block 4\n↓ 15×20"]
+        E5["Conv block 5\nbottleneck"]
+        E1-->E2-->E3-->E4-->E5
+    end
+    subgraph DEC["Decoder with skip connections"]
+        D1["Upsample ×2\n+ skip from E4"]
+        D2["Upsample ×2\n+ skip from E3"]
+        D3["Upsample ×2\n+ skip from E2"]
+        D4["Upsample ×2\n+ skip from E1"]
+        D1-->D2-->D3-->D4
+    end
+    subgraph OUT["5 Independent Sigmoid Heads"]
+        RO["RO  Robot\n0.0–1.0"]
+        FV["FV  Fish\n0.0–1.0"]
+        HD["HD  Diver\n0.0–1.0"]
+        RI["RI  Reef\n0.0–1.0"]
+        WR["WR  Wreck\n0.0–1.0"]
+    end
+    IN --> ENC --> DEC
+    D4 --> RO & FV & HD & RI & WR
+
+    style ENC fill:#0d2b3a,color:#cde,stroke:#1a6080
+    style DEC fill:#0d3320,color:#cec,stroke:#1a6040
+    style OUT fill:#3a1a00,color:#fdc,stroke:#8b4000
 ```
 
 The original SUIM-Net paper defines 8 classes including background, plants, and seafloor, but our pipeline uses only the 5 obstacle-relevant classes above.
@@ -482,39 +470,45 @@ Each 3-D point is colour-coded green (risk=0) → red (risk=1) and written as an
 
 ### Turbidity Model
 
-Simulates three physical mechanisms of underwater optical degradation:
+Simulates three physical mechanisms of underwater optical degradation, all scaling linearly with `level ∈ [0.0, 1.0]`:
 
-```
-apply_turbidity(img, level):
+```mermaid
+flowchart LR
+    IN(["Input RGB\nH×W×3  uint8"])
 
-  1. Gaussian blur (particle light scattering)
-     sigma = 4.0 × level  [px]
-     cv2.GaussianBlur(img, ksize=0, sigmaX=sigma)
+    subgraph TURB["apply_turbidity()  ·  src/augment/turbidity.py"]
+        B["① Gaussian blur\nσ = 4.0 × level  px\n(particle light scatter)"]
+        V["② Backscatter veil\nveil = [140, 178, 153]  greenish-white\nblend = 0.45 × level\nimg = (1−blend)·img + blend·veil\n(suspended particle haze)"]
+        R["③ Red attenuation\nR channel ×= (1 − 0.35×level)\n(water absorbs red wavelengths)"]
+        B --> V --> R
+    end
 
-  2. Backscatter veil (suspended particle haze)
-     veil_color = [140, 178, 153]  (greenish-white)
-     veil_blend  = 0.45 × level
-     img = (1 - veil_blend) × img + veil_blend × veil_color
+    OUT(["Augmented RGB\nH×W×3  uint8\n(copy — original unchanged)"])
+    IN --> B
+    R --> OUT
 
-  3. Red-channel attenuation (water absorbs red wavelengths)
-     red_atten = 0.35 × level
-     img[:, :, 0] *= (1 - red_atten)  [R channel]
-
-  All effects scale linearly with level ∈ [0.0, 1.0].
+    style TURB fill:#1a0d2b,color:#dce,stroke:#5a2080
 ```
 
 ### Robustness Sweep
 
-`run_sweep.py` evaluates SUIM-Net at five turbidity levels:
+```mermaid
+flowchart TD
+    subgraph SWEEP["run_sweep.py  ·  src/augment/run_sweep.py"]
+        L["Loop: level in [0.0, 0.25, 0.50, 0.75, 1.0]"]
+        A["apply_turbidity(img, level)\nfor each test image"]
+        I["SUIM-Net inference\non augmented image"]
+        M["metric_calc per class\nIoU · Dice · Precision · Recall"]
+        C["write per-level CSV\nreports/turbidity/level_*/metrics.csv"]
+        S["write turbidity_summary.csv\none row per level × class"]
+        L --> A --> I --> M --> C
+        C --> S
+    end
 
-```
-for level in [0.0, 0.25, 0.50, 0.75, 1.0]:
-    for image in test_set:
-        augmented = apply_turbidity(image, level)
-        logits    = suimnet.predict(augmented)
-        metrics   = compute_iou_dice_prec_recall(logits, gt_masks)
-    write_csv(level, per_class_metrics)
-write_summary_csv()   # one row per level × class
+    CHARTS["make_report_figures.py\nturbidity_miou.png\nturbidity_heatmap.png"]
+    S --> CHARTS
+
+    style SWEEP fill:#1a0d2b,color:#dce,stroke:#5a2080
 ```
 
 **Results:**
@@ -533,20 +527,72 @@ write_summary_csv()   # one row per level × class
 
 ### SUIM-Net Baselines
 
-#### Step 1 — In-Domain Baseline (SUIM TEST)
-```
-dataset : SUIM test split (110 images)
-script  : python -m src.suimnet.run_infer
-          --images_dir  data/suim/TEST/images/
-          --output_dir  outputs/suimnet/predictions/
-          --suimnet_weights vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5
-          --save_logits    ← saves .npz logit files for threshold sweep
+#### Evaluation Chain
 
-python -m src.suimnet.metric_calc
-          --pred_dir   outputs/suimnet/predictions/
-          --gt_dir     data/suim/TEST/masks/
-          --out_csv    reports/suimnet/suim_metrics.csv
+```mermaid
+flowchart TD
+    subgraph DATASETS["Datasets  ·  3 test splits"]
+        SUIM_D["SUIM TEST\n110 images\nin-domain baseline"]
+        DEEP_D["DeepFish TEST\n310 images\nfish class only\ncross-dataset"]
+        USIS_D["USIS10K TEST\n1,596 images\nall 5 classes\ncross-dataset"]
+    end
+
+    subgraph CONVERT["One-time conversion  ·  run once per dataset"]
+        C1["convert_usis10k.py\nCOCO JSON → per-class PNG masks\nRO/ FV/ HD/ RI/ WR/"]
+        C2["convert_deepfish.py\nbinary fish masks → FV/ layout"]
+    end
+
+    USIS_D --> C1
+    DEEP_D --> C2
+
+    subgraph INFER["run_infer.py  ·  src/suimnet/run_infer.py"]
+        I1["resize → 240×320\nKeras predict()\n→ sigmoid logits"]
+        I2["threshold @ 0.5\n→ RGB prediction masks"]
+        I3["--save_logits\n→ .npz per image\n(for threshold sweep)"]
+        I1 --> I2 & I3
+    end
+
+    SUIM_D & C1 & C2 --> INFER
+
+    subgraph METRICS["metric_calc.py  ·  src/suimnet/metric_calc.py"]
+        M1["decode GT masks\nRGB bit-encoding → binary\nper class"]
+        M2["compute per-image\nIoU · Dice · Precision · Recall"]
+        M3["write per-image CSV\nreports/suimnet/suim_metrics.csv"]
+        M1 --> M2 --> M3
+    end
+
+    INFER --> METRICS
+
+    subgraph THRESH["threshold_sweep.py  ·  src/suimnet/threshold_sweep.py"]
+        T1["load .npz logits"]
+        T2["sweep [0.05…0.95]\nper class"]
+        T3["find argmax IoU\nper class"]
+        T4["output recommended\nthreshold YAML block"]
+        T1 --> T2 --> T3 --> T4
+    end
+
+    I3 --> THRESH
+
+    subgraph CHARTS["chart_metrics.py  ·  src/suimnet/chart_metrics.py"]
+        CH1["grouped bar chart\n(IoU Dice Prec Recall)"]
+        CH2["IoU boxplots per class"]
+        CH3["macro-avg summary bar"]
+        CH4["per-image IoU heatmap"]
+        CH5["PR scatter plot"]
+        CH6["TP/FP/FN breakdown"]
+    end
+
+    METRICS --> CHARTS
+
+    style DATASETS fill:#1a3a5c,color:#cdf,stroke:#2d6a9f
+    style CONVERT fill:#0d2b3a,color:#cde,stroke:#1a5060
+    style INFER fill:#0d3320,color:#cec,stroke:#1a6040
+    style METRICS fill:#3a1a00,color:#fdc,stroke:#8b4000
+    style THRESH fill:#2a0d3a,color:#dce,stroke:#6a1a8a
+    style CHARTS fill:#1a1a3a,color:#cce,stroke:#4040aa
 ```
+
+#### Step 1 — In-Domain Baseline (SUIM TEST)
 
 Produces per-image, per-class IoU/Dice/Precision/Recall in a CSV. The 6 publication-ready charts are then generated by `src/suimnet/chart_metrics.py`.
 
@@ -579,6 +625,53 @@ python scripts/make_report_figures.py  # regenerates turbidity charts
 ```
 
 ### SPADE Baselines
+
+#### Evaluation Chain
+
+```mermaid
+flowchart TD
+    subgraph SRC["Data Sources"]
+        FL["FLSea-VI\nHuggingFace parquet\n4,483 val images\nRGB + metric depth"]
+        ST["SeaThru\nKaggle ZIP\n~1,100 images\nSFM depth"]
+    end
+
+    subgraph CONV["Dataset Converters  ·  src/spade/"]
+        CF["convert_flsea.py\nparquet → float32 TIFF\n+ sparse CSV per image\n+ filenames list"]
+        CS["convert_seathru.py\nmatch RGB↔depth by ID\n+ sparse CSV\n+ filenames list"]
+    end
+
+    FL --> CF
+    ST --> CS
+
+    subgraph HINTS["Sparse Hint CSVs  ·  _spade_utils.py"]
+        H["generate_sparse_csv()\nShi-Tomasi corners\n→ [row, col, depth] at 240×320"]
+    end
+    CF & CS --> H
+
+    subgraph EVAL["run_eval.py  ·  src/spade/run_eval.py"]
+        E1["load filenames list\nfrom configs/spade_datasets.yaml"]
+        E2["for each image:\nload RGB + sparse CSV\n→ SPADE forward pass"]
+        E3["mask valid pixels\nin each eval range\n≤10m · ≤5m · ≤2m"]
+        E4["compute MAE · RMSE\nAbsRel · SILog\nδ<1.25 · δ<1.25² · δ<1.25³"]
+        E5["write metrics CSV\nreports/spade/*_metrics.csv"]
+        E1 --> E2 --> E3 --> E4 --> E5
+    end
+
+    H --> EVAL
+
+    subgraph CHART["chart_metrics.py  ·  src/spade/chart_metrics.py"]
+        P1["errors_by_range.png\nMAE RMSE AbsRel SILog"]
+        P2["accuracy_by_range.png\nδ-threshold curves"]
+    end
+
+    E5 --> CHART
+
+    style SRC fill:#1a3a5c,color:#cdf,stroke:#2d6a9f
+    style CONV fill:#0d2b3a,color:#cde,stroke:#1a5060
+    style HINTS fill:#0d3320,color:#cec,stroke:#1a6040
+    style EVAL fill:#3a1a00,color:#fdc,stroke:#8b4000
+    style CHART fill:#1a1a3a,color:#cce,stroke:#4040aa
+```
 
 #### Step 1 — Download and Convert Datasets
 ```
