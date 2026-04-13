@@ -19,3 +19,7 @@ __pycache__/
 # editor
 .vscode/
 .DS_Store
+
+# large video files (exceed GitHub's 100MB limit)
+videos/processed/
+*.mp4

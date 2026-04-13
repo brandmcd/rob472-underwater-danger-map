@@ -30,6 +30,9 @@ VIDEO="${VIDEO:-videos/raw/bluerov1.mp4}"
 MAX_FRAMES="${MAX_FRAMES:-}"
 FPS="${FPS:-10}"
 PLY_EVERY="${PLY_EVERY:-30}"
+NEAR_M="${NEAR_M:-2.5}"           # danger-zone radius in metres (2.5 m suits typical BlueROV distances)
+DISPLAY_GAMMA="${DISPLAY_GAMMA:-0.5}"  # sqrt compression — makes 25 % risk show as visible orange
+SHOW_DEPTH="${SHOW_DEPTH:-1}"     # 1 = add Depth Map panel; 0 = omit
 
 WEIGHTS_PATH="/scratch/rob572w26_class_root/rob572w26_class/${USER}/spade_weights/underwater_depth_pipeline.pt"
 SUIMNET_WEIGHTS="vendor/SUIM-Net/sample_test/ckpt_seg_5obj.hdf5"
@@ -94,6 +97,9 @@ MAX_FRAMES_ARG=""
 PLY_ARG=""
 [[ "$PLY_EVERY" -gt 0 ]] && PLY_ARG="--save_ply --ply_every $PLY_EVERY"
 
+SHOW_DEPTH_ARG=""
+[[ "$SHOW_DEPTH" == "1" ]] && SHOW_DEPTH_ARG="--show_depth"
+
 # shellcheck disable=SC2086
 python -m src.danger_map.run_video \
     --video_file      "$VIDEO" \
@@ -101,6 +107,9 @@ python -m src.danger_map.run_video \
     --spade_weights   "$WEIGHTS_PATH" \
     --out_dir         "$OUT_DIR" \
     --fps             "$FPS" \
+    --near_m          "$NEAR_M" \
+    --display_gamma   "$DISPLAY_GAMMA" \
+    $SHOW_DEPTH_ARG \
     $PLY_ARG \
     $MAX_FRAMES_ARG
 

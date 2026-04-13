@@ -82,11 +82,11 @@ scp -r ${UNIQNAME}@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/vi
 
 Or just the videos (not the per-frame PNGs, which are large):
 ```bash
-scp ${UNIQNAME}@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/videos/processed/bluerov1/danger_map.mp4 \
+scp brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/videos/processed/bluerov1/danger_map.mp4 \
     videos/processed/bluerov1/
-scp ${UNIQNAME}@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/videos/processed/bluerov2/danger_map.mp4 \
+scp brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/videos/processed/bluerov2/danger_map.mp4 \
     videos/processed/bluerov2/
-scp ${UNIQNAME}@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/videos/processed/multimedia-unexpected-1920x1080-1/danger_map.mp4 \
+scp brandmcd@greatlakes.arc-ts.umich.edu:~/rob472-underwater-danger-map/videos/processed/multimedia-unexpected-1920x1080-1/danger_map.mp4 \
     "videos/processed/multimedia-unexpected-1920x1080-1/"
 ```
 

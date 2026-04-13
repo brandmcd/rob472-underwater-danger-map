@@ -48,8 +48,7 @@ Usage (on ARC Great Lakes)
         --out_dir         reports/danger_map/druva/artifact_01
 
     # Produces:
-    #   <out_dir>/frames/000001_overlay.png  (per-frame overlay)
-    #   <out_dir>/danger_map.mp4             (stitched video)
+    #   <out_dir>/danger_map.mp4             (output video)
 
 Notes
 ─────
@@ -302,47 +301,90 @@ def _risk_colorbar(width: int, bar_h: int = 22) -> np.ndarray:
     return bar_rgb
 
 
-def _make_side_by_side(rgb: np.ndarray, overlay: np.ndarray,
-                       nav_panel: np.ndarray | None = None) -> np.ndarray:
+def _depth_colorbar(width: int, max_depth_m: float = 12.0, bar_h: int = 22) -> np.ndarray:
+    """Return a (bar_h, width, 3) uint8 RGB colorbar for the PLASMA depth colormap.
+
+    Convention: dark-purple = 0 m (close), bright-yellow = max_depth_m (far),
+    matching the colour scale used in vendor/SPADE evaluation figures.
+    """
+    gradient = np.linspace(0, 255, width, dtype=np.uint8)[np.newaxis, :].repeat(bar_h, axis=0)
+    bar_bgr = cv2.applyColorMap(gradient, cv2.COLORMAP_PLASMA)
+    bar_rgb = bar_bgr[..., ::-1].copy()
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(bar_rgb, "depth: 0m",        (4,           bar_h - 5), font, 0.38, (220, 220, 220), 1)
+    cv2.putText(bar_rgb, f"{max_depth_m:.0f}m", (width - 30, bar_h - 5), font, 0.38, ( 20,  20,  20), 1)
+    mid = width // 2
+    cv2.putText(bar_rgb, f"{max_depth_m / 2:.0f}m", (mid - 8, bar_h - 5), font, 0.38, (160, 160, 160), 1)
+    return bar_rgb
+
+
+def _render_depth_panel(depth: np.ndarray, H: int, W: int,
+                        max_depth_m: float = 12.0) -> np.ndarray:
+    """Render a SPADE depth map as a PLASMA-colourmap panel of size (H, W, 3) uint8.
+
+    Normalisation: 0 m → dark purple, max_depth_m → bright yellow.
+    Invalid pixels (depth ≤ 0 or NaN) are rendered black.
+    """
+    depth_rs = cv2.resize(depth, (W, H), interpolation=cv2.INTER_NEAREST) \
+               if depth.shape[:2] != (H, W) else depth.copy()
+
+    depth_norm = np.clip(depth_rs / max_depth_m, 0.0, 1.0)
+    depth_u8   = (depth_norm * 255).astype(np.uint8)
+
+    depth_bgr = cv2.applyColorMap(depth_u8, cv2.COLORMAP_PLASMA)
+    depth_rgb = depth_bgr[..., ::-1].copy()
+
+    # Black-out invalid pixels
+    invalid = (depth_rs <= 0) | ~np.isfinite(depth_rs)
+    depth_rgb[invalid] = 0
+
+    return depth_rgb
+
+
+def _make_side_by_side(
+    rgb: np.ndarray,
+    overlay: np.ndarray,
+    nav_panel: np.ndarray | None = None,
+    depth_panel: np.ndarray | None = None,
+    max_depth_m: float = 12.0,
+) -> np.ndarray:
     """
     Assemble a labelled multi-panel frame.
 
-    2-panel (nav_panel is None):
-        [title bar]
-        [ Original RGB  |  Danger Map overlay ]
-        [    risk colorbar (right panel only)  ]
+    Panel order (left → right):
+        Original  |  [Depth Map]  |  Danger Map  |  [Navigation]
 
-    3-panel (nav_panel provided):
-        [title bar]
-        [ Original RGB  |  Danger Map  |  Sector Risk + Nav ]
-        [          risk colorbar (spans panels 2+3)          ]
+    Each panel is W×H pixels.  A title bar (30 px) sits above the panels and a
+    per-panel colorbar (22 px) sits below each panel that has one.
     """
     H, W = rgb.shape[:2]
     title_h = 30
     bar_h   = 22
-    n_panels = 3 if nav_panel is not None else 2
-    total_h = title_h + H + bar_h
 
-    canvas = np.zeros((total_h, W * n_panels, 3), dtype=np.uint8)
-
-    # Panels
-    canvas[title_h : title_h + H, :W] = rgb
-    canvas[title_h : title_h + H, W:2*W] = overlay
+    # Build ordered list of (image, label, colorbar | None)
+    panels: list[tuple[np.ndarray, str, np.ndarray | None]] = [
+        (rgb, "Original", None),
+    ]
+    if depth_panel is not None:
+        dp = depth_panel if depth_panel.shape[:2] == (H, W) \
+             else cv2.resize(depth_panel, (W, H))
+        panels.append((dp, "Depth Map", _depth_colorbar(W, max_depth_m, bar_h)))
+    panels.append((overlay, "Danger Map", _risk_colorbar(W, bar_h)))
     if nav_panel is not None:
-        nav_rs = cv2.resize(nav_panel, (W, H)) if nav_panel.shape[:2] != (H, W) else nav_panel
-        canvas[title_h : title_h + H, 2*W:3*W] = nav_rs
+        np_rs = nav_panel if nav_panel.shape[:2] == (H, W) \
+                else cv2.resize(nav_panel, (W, H))
+        panels.append((np_rs, "Navigation", _risk_colorbar(W, bar_h)))
 
-    # Colorbar under danger-map panel(s)
-    bar_w = W * (n_panels - 1)
-    bar = _risk_colorbar(bar_w, bar_h)
-    canvas[title_h + H :, W:] = bar
+    n = len(panels)
+    canvas = np.zeros((title_h + H + bar_h, W * n, 3), dtype=np.uint8)
 
-    # Title labels
     font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(canvas, "Original",   (10,      24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "Danger Map", (W + 10,  24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
-    if nav_panel is not None:
-        cv2.putText(canvas, "Navigation", (2*W + 10, 24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+    for i, (img, label, bar) in enumerate(panels):
+        x0 = i * W
+        canvas[title_h : title_h + H, x0 : x0 + W] = img
+        cv2.putText(canvas, label, (x0 + 10, 24), font, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+        if bar is not None:
+            canvas[title_h + H :, x0 : x0 + W] = bar
 
     return canvas
 
@@ -377,6 +419,19 @@ def main() -> None:
                     help="Output video container. Use 'avi' if mp4 fails on the cluster.")
     ap.add_argument("--overlay_alpha", type=float, default=0.5,
                     help="Blend weight for the danger heatmap (0=RGB only, 1=heatmap only). Default: 0.5")
+    ap.add_argument("--near_m", type=float, default=2.5,
+                    help="Danger-zone radius in metres: objects closer than this get full proximity risk (1.0). "
+                         "Increase for larger vehicles or to surface risk at typical underwater distances. "
+                         "Default: 2.5 m  (use 1.0 m when GT depth hints are available).")
+    ap.add_argument("--display_gamma", type=float, default=0.5,
+                    help="Gamma compression for the danger-map visualisation only (risk_map itself is unaffected). "
+                         "Values < 1 boost low-to-mid risk areas so they show as visible colour rather than near-black. "
+                         "0.5 = sqrt compression.  1.0 = no compression (linear).  Default: 0.5")
+    ap.add_argument("--show_depth", action="store_true",
+                    help="Add a Depth Map panel (PLASMA colourmap, 0→dark-purple, max_depth→bright-yellow) "
+                         "between the Original and Danger Map panels.")
+    ap.add_argument("--max_depth_m", type=float, default=12.0,
+                    help="Maximum depth (m) for the depth-panel colour scale. Default: 12.0")
     ap.add_argument("--save_ply", action="store_true",
                     help="Write a coloured risk .ply point cloud for every Nth frame to <out_dir>/clouds/.")
     ap.add_argument("--ply_every", type=int, default=10,
@@ -385,8 +440,7 @@ def main() -> None:
 
     depth_dir  = Path(args.depth_dir).resolve() if args.depth_dir else None
     out_dir    = Path(args.out_dir).resolve()
-    frames_out = out_dir / "frames"
-    frames_out.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     clouds_out = out_dir / "clouds"
     if args.save_ply:
         clouds_out.mkdir(parents=True, exist_ok=True)
@@ -469,6 +523,8 @@ def main() -> None:
         risk_map, overlay = danger_map(
             rgb, seg_logits, depth_pred,
             overlay_alpha=args.overlay_alpha,
+            near_m=args.near_m,
+            display_gamma=args.display_gamma,
         )
 
         # Navigation command + optional PLY
@@ -477,13 +533,13 @@ def main() -> None:
             ply_path = clouds_out / f"{i:06d}_cloud.ply"
         nav_result = nav_command(risk_map, depth_pred, ply_path=ply_path)
 
-        # Build 3-panel frame (Original | Danger Map | Navigation)
-        nav_panel    = draw_nav_overlay(overlay, nav_result)
-        side_by_side = _make_side_by_side(rgb, overlay, nav_panel)
+        # Optional depth visualisation panel
+        depth_panel = _render_depth_panel(depth_pred, *rgb.shape[:2], args.max_depth_m) \
+                      if args.show_depth else None
 
-        # Save individual frame
-        out_path = frames_out / f"{i:06d}_overlay.png"
-        cv2.imwrite(str(out_path), cv2.cvtColor(side_by_side, cv2.COLOR_RGB2BGR))
+        # Build multi-panel frame (Original | [Depth] | Danger Map | Navigation)
+        nav_panel    = draw_nav_overlay(overlay, nav_result)
+        side_by_side = _make_side_by_side(rgb, overlay, nav_panel, depth_panel, args.max_depth_m)
 
         # Initialise video writer on first frame (needs frame dimensions)
         if video_writer is None:
@@ -504,7 +560,7 @@ def main() -> None:
     if video_cap is not None:
         video_cap.release()
 
-    print(f"Overlay frames saved → {frames_out}  ({n_written} frames)")
+    print(f"Frames written: {n_written}")
 
 
 if __name__ == "__main__":

@@ -114,6 +114,7 @@ def danger_map(
     near_m: float = NEAR_M,
     proximity_power: float = PROXIMITY_POWER,
     overlay_alpha: float = 0.6,
+    display_gamma: float = 1.0,
     risk_fn: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -131,6 +132,10 @@ def danger_map(
         near_m:          Danger-zone radius in metres. See TUNING GUIDE above.
         proximity_power: Fall-off exponent for distance. See TUNING GUIDE above.
         overlay_alpha:   Blend weight for the heatmap (0=invisible, 1=fully opaque).
+        display_gamma:   Gamma compression applied to the risk map *for visualisation
+                         only* — the returned risk_map is always the raw value.
+                         Values < 1 boost low-risk visibility (e.g. 0.5 = sqrt).
+                         Default 1.0 = no compression (linear).
         risk_fn:         Custom risk formula: fn(hazard, proximity) → risk.
                          If None, uses  risk = hazard × proximity^power.
 
@@ -169,7 +174,7 @@ def danger_map(
     else:
         risk_map = hazard * proximity   # default: multiplicative
 
-    overlay = _colorize_risk(rgb, risk_map, seg, seg_threshold, overlay_alpha)
+    overlay = _colorize_risk(rgb, risk_map, seg, seg_threshold, overlay_alpha, display_gamma)
 
     return risk_map, overlay
 
@@ -196,6 +201,7 @@ def _colorize_risk(
     seg: np.ndarray,
     seg_threshold: float,
     alpha: float,
+    display_gamma: float = 1.0,
 ) -> np.ndarray:
     """
     Render the danger overlay.
@@ -203,17 +209,22 @@ def _colorize_risk(
     Background is desaturated to grayscale so the HOT heatmap (black→red→yellow→white)
     stands out clearly without clashing with the blue/green underwater colours.
     Per-class contours and text labels are drawn on top.
+
+    display_gamma compresses the risk range for visualisation only —
+    values < 1 (e.g. 0.5) boost low-to-mid risk regions so they appear as
+    visible orange rather than near-black.  The returned risk_map is unaffected.
     """
     # 1. Grayscale background — eliminates colour-on-colour clash
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     bg = np.stack([gray, gray, gray], axis=-1).astype(np.float32)
 
-    # 2. HOT heatmap blended by per-pixel risk weight
-    risk_u8 = (risk * 255).astype(np.uint8)
+    # 2. HOT heatmap blended by per-pixel display-risk weight
+    vis_risk = risk ** display_gamma if display_gamma != 1.0 else risk  # gamma compression
+    risk_u8 = (vis_risk * 255).astype(np.uint8)
     heatmap_bgr = cv2.applyColorMap(risk_u8, cv2.COLORMAP_HOT)
     heatmap_rgb = heatmap_bgr[..., ::-1].astype(np.float32)   # BGR → RGB
 
-    w = (risk * alpha)[..., np.newaxis]                        # (H, W, 1)
+    w = (vis_risk * alpha)[..., np.newaxis]                    # (H, W, 1)
     blended = ((1.0 - w) * bg + w * heatmap_rgb).clip(0, 255).astype(np.uint8)
 
     # 3. Class contours + labels
